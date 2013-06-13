@@ -29,6 +29,7 @@ static size_t DES_local_work_size = WORK_GROUP_SIZE;
 static int *loaded_hash;
 static unsigned int *cmp_out, num_loaded_hash, min, max ;
 static int benchmark = 1;
+static unsigned int offset = 0;
 
 void DES_opencl_clean_all_buffer()
 {
@@ -78,9 +79,9 @@ void opencl_DES_reset(struct db_main *db) {
 
 void opencl_DES_bs_init_global_variables() {
 
+	B = (DES_bs_vector*) mem_alloc (MULTIPLIER * 64 * sizeof(DES_bs_vector));
 	opencl_DES_bs_all = (opencl_DES_bs_combined*) mem_alloc (MULTIPLIER * sizeof(opencl_DES_bs_combined));
 	opencl_DES_bs_data = (opencl_DES_bs_transfer*) mem_alloc (MULTIPLIER * sizeof(opencl_DES_bs_transfer));
-	B = (DES_bs_vector*) mem_alloc (MULTIPLIER * 64 * sizeof(DES_bs_vector));
 }
 
 
@@ -173,8 +174,8 @@ static void find_best_gws(struct fmt_main *fmt)
 		fprintf(stderr, "Optimal Global Work Size:%ld\n",
 		        count * WORK_GROUP_SIZE * DES_BS_DEPTH);
 
-	fmt -> params.max_keys_per_crypt = count * WORK_GROUP_SIZE * DES_BS_DEPTH;
-	fmt -> params.min_keys_per_crypt = WORK_GROUP_SIZE * DES_BS_DEPTH;
+	//fmt -> params.max_keys_per_crypt = DES_BS_DEPTH;
+	//fmt -> params.min_keys_per_crypt = DES_BS_DEPTH;
 }
 
 #if HARDCODE_SALT
@@ -360,8 +361,8 @@ void DES_bs_select_device(struct fmt_main *fmt)
 		if (options.verbosity > 3)
 			fprintf(stderr, "Global worksize (GWS) forced to %zu\n",
 			        global_work_size);
-		fmt -> params.max_keys_per_crypt = global_work_size;
-		fmt -> params.min_keys_per_crypt = WORK_GROUP_SIZE * DES_BS_DEPTH ;
+		//fmt -> params.max_keys_per_crypt = global_work_size;
+		//fmt -> params.min_keys_per_crypt = WORK_GROUP_SIZE * DES_BS_DEPTH ;
 	}
 }
 #else
@@ -372,7 +373,9 @@ void DES_bs_select_device(struct fmt_main *fmt)
 	size_t max_lws;
 	const char *errMsg;
 
-	opencl_init_opt("$JOHN/kernels/DES_bs_kernel.cl", ocl_gpu_id, NULL);
+	opencl_init_dev(ocl_gpu_id);
+	read_kernel_source("$JOHN/kernels/DES_bs_kernel.cl") ;
+	opencl_build(ocl_gpu_id, "-fno-bin-amdil -fno-bin-source -fbin-exe", 0, NULL, 1);
 
 	krnl[ocl_gpu_id][0] = clCreateKernel(program[ocl_gpu_id], "DES_bs_25_b", &err) ;
 	if (err) {
@@ -388,8 +391,8 @@ void DES_bs_select_device(struct fmt_main *fmt)
 	HANDLE_CLERROR(clGetKernelWorkGroupInfo(krnl[ocl_gpu_id][0], devices[ocl_gpu_id], CL_KERNEL_WORK_GROUP_SIZE, sizeof(max_lws), &max_lws, NULL), "Query max work group size");
 
 	/* ...but ensure GWS is still a multiple of LWS */
-	while (DES_local_work_size > max_lws)
-		DES_local_work_size >>= 1;
+	//while (DES_local_work_size > max_lws)
+		//DES_local_work_size >>= 1;
 	//fprintf(stderr, "Using LWS %zu\n", DES_local_work_size);
 
 	errMsg = "Create Buffer FAILED.";
@@ -433,8 +436,8 @@ void DES_bs_select_device(struct fmt_main *fmt)
 		if (options.verbosity > 3)
 			fprintf(stderr, "Global worksize (GWS) forced to %zu\n",
 			        global_work_size);
-		fmt -> params.max_keys_per_crypt = global_work_size;
-		fmt -> params.min_keys_per_crypt = WORK_GROUP_SIZE * DES_BS_DEPTH ;
+		//fmt -> params.max_keys_per_crypt = global_work_size;
+		//fmt -> params.min_keys_per_crypt = WORK_GROUP_SIZE * DES_BS_DEPTH ;
 	}
 }
 #endif
@@ -499,8 +502,8 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 
 	if (section % DES_local_work_size != 0)
 		N = (section / DES_local_work_size + 1) * DES_local_work_size ;
-	else
-		N = section;
+	//else
+		N = MULTIPLIER;
 
 	if (set_salt == 1) {
 		unsigned int found = 0;
@@ -534,7 +537,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 		set_salt = 0;
 	}
 
-	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id],opencl_DES_bs_data_gpu,CL_TRUE,0,MULTIPLIER*sizeof(opencl_DES_bs_transfer),opencl_DES_bs_data,0,NULL,NULL ), "Failed Copy data to gpu");
+
 
 	if(salt) {
 		struct db_password *pw;
@@ -552,12 +555,16 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 		//printf("%d\n",loaded_hash[salt->count-1]);
 		HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], loaded_hash_gpu, CL_TRUE, 0, (salt -> count) * sizeof(int) * 2, loaded_hash, 0, NULL, NULL ), "Failed Copy data to gpu");
 		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 5, sizeof(int), &(salt->count)), "Set Kernel krnl Arg 5 :FAILED") ;
-
+		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 7, sizeof(cl_uint), &offset), "Set Kernel krnl Arg 7 :FAILED") ;
+		*pcount = (MULTIPLIER * 32) ;
+		offset += MULTIPLIER * 32;
 	}
 
 	else {
 		int tmp = 0;
+		HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id],opencl_DES_bs_data_gpu,CL_TRUE,0,MULTIPLIER*sizeof(opencl_DES_bs_transfer),opencl_DES_bs_data,0,NULL,NULL ), "Failed Copy data to gpu");
 		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 5, sizeof(int), &tmp), "Set Kernel krnl Arg 5 :FAILED") ;
+		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 7, sizeof(unsigned int), &tmp), "Set Kernel krnl Arg 7 :FAILED") ;
 	}
 
 	err = clEnqueueNDRangeKernel(queue[ocl_gpu_id], krnl[ocl_gpu_id][pos], 1, NULL, &N, &M, 0, NULL, &evnt);
@@ -587,6 +594,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 
 		if (max) {
 			HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], B_gpu,CL_TRUE, 0, MULTIPLIER * 64 * sizeof(DES_bs_vector), B, 0, NULL, NULL),"Write FAILED\n");
+			HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], opencl_DES_bs_data_gpu, CL_TRUE, 0, MULTIPLIER * sizeof(opencl_DES_bs_transfer), opencl_DES_bs_data, 0, NULL, NULL ), "Failed Copy data from gpu");
 			clFinish(queue[ocl_gpu_id]);
 			return (max + 1)* DES_BS_DEPTH;
 		}
@@ -622,8 +630,8 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 
 	if (section % DES_local_work_size != 0)
 		N = (section / DES_local_work_size + 1) * DES_local_work_size ;
-	else
-		N = section;
+	//else
+		N = MULTIPLIER;
 
 	if (set_salt == 1) {
 		HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], index96_gpu, CL_TRUE, 0, 96 * sizeof(unsigned int), index96, 0, NULL, NULL), "Failed Copy data to gpu");
@@ -631,8 +639,6 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 6, sizeof(cl_mem), &cmp_out_gpu), "Set Kernel Arg krnl FAILED arg6\n");
 		set_salt = 0;
 	}
-
-	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], opencl_DES_bs_data_gpu, CL_TRUE, 0, MULTIPLIER * sizeof(opencl_DES_bs_transfer), opencl_DES_bs_data, 0, NULL, NULL ), "Failed Copy data to gpu");
 
 	if(salt) {
 		int i = 0, *bin;
@@ -650,12 +656,16 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 		//printf("%d\n",loaded_hash[salt->count-1 + salt -> count]);
 		HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], loaded_hash_gpu, CL_TRUE, 0, (salt -> count) * sizeof(int) * 2, loaded_hash, 0, NULL, NULL ), "Failed Copy data to gpu");
 		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 5, sizeof(int), &(salt->count)), "Set Kernel krnl Arg 5 :FAILED") ;
-
+		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 7, sizeof(unsigned int), &offset), "Set Kernel krnl Arg 7 :FAILED") ;
+		*pcount = (MULTIPLIER * 32) ;
+		offset += MULTIPLIER * 32 ;
 	}
 
 	else {
 		int tmp = 0;
+		HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], opencl_DES_bs_data_gpu, CL_TRUE, 0, MULTIPLIER * sizeof(opencl_DES_bs_transfer), opencl_DES_bs_data, 0, NULL, NULL ), "Failed Copy data to gpu");
 		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 5, sizeof(int), &tmp), "Set Kernel krnl Arg 5 :FAILED") ;
+		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 7, sizeof(unsigned int), &tmp), "Set Kernel krnl Arg 7 :FAILED") ;
 	}
 
 
@@ -687,8 +697,8 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 
 
 		if(max) {
-
 			HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], B_gpu, CL_TRUE, 0, MULTIPLIER * 64 * sizeof(DES_bs_vector), B, 0, NULL, NULL), "Write FAILED\n");
+			HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], opencl_DES_bs_data_gpu, CL_TRUE, 0, MULTIPLIER * sizeof(opencl_DES_bs_transfer), opencl_DES_bs_data, 0, NULL, NULL ), "Failed Copy data from gpu");
 			clFinish(queue[ocl_gpu_id]);
 			return (max + 1) * DES_BS_DEPTH ;
 		}

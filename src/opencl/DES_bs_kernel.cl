@@ -151,16 +151,6 @@ typedef struct{
 #define mask80 0x80808080
 
 
-#define LOAD_V 						\
-	kvtype v0 = *(MAYBE_GLOBAL kvtype *)&vp[0]; 	\
-	kvtype v1 = *(MAYBE_GLOBAL kvtype *)&vp[1]; 	\
-	kvtype v2 = *(MAYBE_GLOBAL kvtype *)&vp[2]; 	\
-	kvtype v3 = *(MAYBE_GLOBAL kvtype *)&vp[3]; 	\
-	kvtype v4 = *(MAYBE_GLOBAL kvtype *)&vp[4]; 	\
-	kvtype v5 = *(MAYBE_GLOBAL kvtype *)&vp[5]; 	\
-	kvtype v6 = *(MAYBE_GLOBAL kvtype *)&vp[6]; 	\
-	kvtype v7 = *(MAYBE_GLOBAL kvtype *)&vp[7];
-
 #define kvand_shl1_or(dst, src, mask) 			\
 	kvand(tmp, src, mask); 				\
 	kvshl1(tmp, tmp); 				\
@@ -306,13 +296,11 @@ inline void cmp( __private DES_bs_vector *B,
 	  __global int *binary,
 	  int num_loaded_hash,
 	  volatile __global uint *output,
-	  int section) {
+	  int section,
+	  __private uint *flag) {
 
 
 	int value[2] , mask, i, bit;
-	int index, flag, depth, idx;
-	DES_bs_vector *b;
-
 
 	for(i = 0; i < num_loaded_hash; i++) {
 
@@ -330,7 +318,7 @@ inline void cmp( __private DES_bs_vector *B,
 
 			if (mask == ~(int)0) goto next_hash;
 		}
-
+		flag[0] = 1;
 		atomic_max( &output[i],section + 1) ;
 
 	next_hash: ;
@@ -339,18 +327,132 @@ inline void cmp( __private DES_bs_vector *B,
 }
 #undef GET_BIT
 
+void pass_gen(unsigned int section,
+	      __global DES_bs_transfer *DES_bs_all,
+	      unsigned int offset) {
+#define MODULO_N 10
+	unsigned char key[8];
+	unsigned int weight = 1, init, num, i, tmp;
+	init = section * 32 + offset;
+
+	for(i = 0; i < 32; i++) {
+		num = init + i;
+
+		if(!num) key[0] = 0;
+		else key[0] = (unsigned char)(48 + (num % MODULO_N)) ;
+
+		weight = MODULO_N ;
+		tmp = num / weight ;
+		if(!tmp) key[1] = 0 ;
+		else key[1] = (unsigned char)(48 + tmp % MODULO_N);
+
+		weight *= MODULO_N ;
+		tmp = num / weight ;
+		if(!tmp) key[2] = 0;
+		else key[2] = (unsigned char)(48 + tmp % MODULO_N);
+
+		weight *= MODULO_N ;
+		tmp = num / weight ;
+		if(!tmp) key[3] = 0;
+		else key[3] = (unsigned char)(48 + tmp % MODULO_N);
+
+		weight *= MODULO_N ;
+		tmp = num / weight ;
+		if(!tmp) key[4] = 0;
+		else key[4] = (unsigned char)(48 + tmp % MODULO_N);
+
+		weight *= MODULO_N ;
+		tmp = num / weight ;
+		if(!tmp) key[5] = 0;
+		else key[5] = (unsigned char)(48 + tmp % MODULO_N);
+
+		weight *= MODULO_N ;
+		tmp = num / weight ;
+		if(!tmp) key[6] = 0;
+		else key[6] = (unsigned char)(48 + tmp % MODULO_N);
+
+		weight *= MODULO_N ;
+		tmp = num / weight ;
+		if(!tmp) key[7] = 0;
+		else key[7] = (unsigned char)(48 + tmp % MODULO_N);
+
+		DES_bs_all[section].xkeys.c[0][i & 7][i >> 3] = key[0] ;
+		DES_bs_all[section].xkeys.c[1][i & 7][i >> 3] = key[1] ;
+		DES_bs_all[section].xkeys.c[2][i & 7][i >> 3] = key[2] ;
+		DES_bs_all[section].xkeys.c[3][i & 7][i >> 3] = key[3] ;
+		DES_bs_all[section].xkeys.c[4][i & 7][i >> 3] = key[4] ;
+		DES_bs_all[section].xkeys.c[5][i & 7][i >> 3] = key[5] ;
+		DES_bs_all[section].xkeys.c[6][i & 7][i >> 3] = key[6] ;
+		DES_bs_all[section].xkeys.c[7][i & 7][i >> 3] = key[7] ;
+
+	}
+}
+
+inline void load_v(__private kvtype *v, unsigned int weight, unsigned int j, unsigned int init ) {
+	unsigned int a, b, c, d;
+
+	a = (j + init) /  weight ;
+	b = (j + 8 + init) / weight ;
+	c = (j + 16 + init) / weight ;
+	d = (j + 24 + init) / weight ;
+
+	a = a ? (a % 10) + 48 : 0;
+	b = b ? (b % 10) + 48 : 0;
+	c = c ? (c % 10) + 48 : 0;
+	d = d ? (d % 10) + 48 : 0;
+
+	v[0] = (a) | (unsigned int)(b << 8) | (unsigned int)(c << 16) | (unsigned int)(d << 24) ;
+}
+
 inline void DES_bs_finalize_keys(unsigned int section,
 				__global DES_bs_transfer *DES_bs_all,
 				int local_offset_K,
-				__local DES_bs_vector *K ) {
+				__local DES_bs_vector *K,
+				unsigned int num_loaded_hash,
+				unsigned int offset) {
+
 
 	__local DES_bs_vector *kp = (__local DES_bs_vector *)&K[local_offset_K] ;
 
-	int ic ;
+	unsigned int ic, weight, init, i  ;
+	kvtype v0, v1, v2, v3, v4, v5, v6, v7;
+	init = section * 32 + offset;
+
 	for (ic = 0; ic < 8; ic++) {
-		MAYBE_GLOBAL DES_bs_vector *vp =
-		    (MAYBE_GLOBAL DES_bs_vector *)&DES_bs_all[section].xkeys.v[ic][0] ;
-		LOAD_V
+
+		MAYBE_GLOBAL DES_bs_vector *vp;
+
+		if ( !num_loaded_hash ) {
+			vp = (MAYBE_GLOBAL DES_bs_vector *)&DES_bs_all[section].xkeys.v[ic][0] ;
+
+			v0 = *(MAYBE_GLOBAL kvtype *)&vp[0];
+			v1 = *(MAYBE_GLOBAL kvtype *)&vp[1];
+			v2 = *(MAYBE_GLOBAL kvtype *)&vp[2];
+			v3 = *(MAYBE_GLOBAL kvtype *)&vp[3];
+			v4 = *(MAYBE_GLOBAL kvtype *)&vp[4];
+			v5 = *(MAYBE_GLOBAL kvtype *)&vp[5];
+			v6 = *(MAYBE_GLOBAL kvtype *)&vp[6];
+			v7 = *(MAYBE_GLOBAL kvtype *)&vp[7];
+		}
+
+		else {
+			weight = 1;
+			i = 0;
+			while(i<ic) {
+				weight *= 10;
+				i++;
+			}
+			load_v(&v0, weight, 0, init);
+			load_v(&v1, weight, 1, init);
+			load_v(&v2, weight, 2, init);
+			load_v(&v3, weight, 3, init);
+			load_v(&v4, weight, 4, init);
+			load_v(&v5, weight, 5, init);
+			load_v(&v6, weight, 6, init);
+			load_v(&v7, weight, 7, init);
+
+		}
+
 		FINALIZE_NEXT_KEY_BIT_0
 		FINALIZE_NEXT_KEY_BIT_1
 		FINALIZE_NEXT_KEY_BIT_2
@@ -368,26 +470,6 @@ inline void DES_bs_finalize_keys(unsigned int section,
 #else
 #include "opencl_sboxes-s.h"
 #endif
-
-#define DES_bs_clear_block_8(j) 			\
-	vst_private(B[j] , 0, zero); 			\
-	vst_private(B[j] , 1, zero); 			\
-	vst_private(B[j] , 2, zero); 			\
-	vst_private(B[j] , 3, zero); 			\
-	vst_private(B[j] , 4, zero); 			\
-	vst_private(B[j] , 5, zero); 			\
-	vst_private(B[j] , 6, zero); 			\
-	vst_private(B[j] , 7, zero);
-
-#define DES_bs_clear_block 				\
-	DES_bs_clear_block_8(0); 			\
-	DES_bs_clear_block_8(8); 			\
-	DES_bs_clear_block_8(16); 			\
-	DES_bs_clear_block_8(24); 			\
-	DES_bs_clear_block_8(32); 			\
-	DES_bs_clear_block_8(40); 			\
-	DES_bs_clear_block_8(48); 			\
-	DES_bs_clear_block_8(56);
 
 #if (FULL_UNROLL || !HARDCODE_SALT)
 
@@ -872,10 +954,11 @@ __kernel void DES_bs_25(constant uint *index768 __attribute__((max_constant_size
 			__global DES_bs_vector *B_global,
 			__global int *binary,
 			  int num_loaded_hash,
-			  volatile __global uint *output) {
+			  volatile __global uint *output,
+			  uint offset) {
 
 		unsigned int section = get_global_id(0), global_offset_B ,local_offset_K;
-		unsigned int local_id = get_local_id(0),i;
+		unsigned int local_id = get_local_id(0), i, iterations;
 
 		global_offset_B = 64 * section;
 		local_offset_K  = 56 * local_id;
@@ -888,30 +971,12 @@ __kernel void DES_bs_25(constant uint *index768 __attribute__((max_constant_size
 			for(i = 0; i < num_loaded_hash; i++)
 				output[i] = 0;
 
+		DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K, num_loaded_hash, offset);
 
-#ifndef RV7xx
-		__local ushort _local_index768[768] ;
-#endif
-		int iterations;
-
-
-		if (DES_bs_all[section].keys_changed)
-			goto finalize_keys;
-body:
-		{
-			vtype zero = vzero;
-			DES_bs_clear_block
-		}
+		for (i = 0; i < 64; i++)
+			B[i] = 0;
 
 		iterations = 25;
-
-#ifndef RV7xx
-		if (!local_id )
-			for(i = 0; i < 768; i++)
-				_local_index768[i] = index768[i];
-
-		barrier(CLK_LOCAL_MEM_FENCE);
-#endif
 
 start:         	H1_k0();
 		H2_k0();
@@ -939,24 +1004,16 @@ start:         	H1_k0();
 			goto start;
 		}
 
-		cmp(B, binary, num_loaded_hash, output, section);
+		tmp = 0;
 
-		tmp = 0 ;
-		for (i = 0; i < num_loaded_hash; i++) {
-				tmp = tmp | output[i];
-			if(tmp) break ;
+		cmp(B, binary, num_loaded_hash, output, section, &tmp);
+
+		if(tmp || (!num_loaded_hash)) {
+			for (i = 0; i < 64; i++)
+				B_global[global_offset_B + i] = (DES_bs_vector)B[i] ;
+
+			pass_gen(section, DES_bs_all, offset);
 		}
-
-		if(tmp || (!num_loaded_hash))
-		for (i = 0; i < 64; i++)
-			B_global[global_offset_B + i] = (DES_bs_vector)B[i] ;
-
-		return;
-
-finalize_keys:
-		DES_bs_all[section].keys_changed = 0;
-	        DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K);
-		goto body;
 
 }
 
@@ -978,7 +1035,8 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 			  __global DES_bs_vector *B_global,
 			  __global int *binary,
 			  int num_loaded_hash,
-			  volatile __global uint *output) {
+			  volatile __global uint *output,
+			  uint offset) {
 
 		unsigned int section = get_global_id(0), global_offset_B, local_offset_K;
 		unsigned int local_id = get_local_id(0);
@@ -986,7 +1044,7 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 		global_offset_B = 64 * section;
 		local_offset_K  = 56 * local_id;
 
-		vtype B[64],tmp;
+		vtype B[64], tmp;
 
 		__local DES_bs_vector _local_K[56*WORK_GROUP_SIZE] ;
 #ifndef RV7xx
@@ -995,21 +1053,16 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 #endif
 		int iterations, rounds_and_swapped;
 
-		long int k=0, i;
+		long int k = 0, i;
 
-		if (DES_bs_all[section].keys_changed)
-			goto finalize_keys;
+		for (i = 0; i < 64; i++)
+			B[i] = 0;
 
-body:
-		{
-			vtype zero = vzero;
-			DES_bs_clear_block
-		}
+		DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K, num_loaded_hash, offset);
 
 		if(!section)
 			for(i = 0; i < num_loaded_hash; i++)
 				output[i] = 0;
-
 
 		k=0;
 		rounds_and_swapped = 8;
@@ -1038,17 +1091,16 @@ start:
 		rounds_and_swapped = 0x108;
 		if (--iterations) goto swap;
 
-		cmp(B, binary, num_loaded_hash, output, section);
-
 		tmp = 0 ;
-		for (i = 0; i < num_loaded_hash; i++) {
-				tmp = tmp | output[i];
-			if(tmp) break ;
-		}
 
-		if(tmp || (!num_loaded_hash))
-		for (i = 0; i < 64; i++)
-			B_global[global_offset_B + i] = (DES_bs_vector)B[i] ;
+		cmp(B, binary, num_loaded_hash, output, section, &tmp);
+
+		if(tmp || (!num_loaded_hash)) {
+			for (i = 0; i < 64; i++)
+				B_global[global_offset_B + i] = (DES_bs_vector)B[i] ;
+
+			pass_gen(section, DES_bs_all, offset);
+		}
 
 		return;
 
@@ -1062,11 +1114,6 @@ next:
 		rounds_and_swapped = 8;
 		iterations--;
 		goto start;
-
-finalize_keys:
-		DES_bs_all[section].keys_changed = 0;
-	        DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K);
-		goto body;
 }
 #endif
 
@@ -1108,7 +1155,8 @@ finalize_keys:
 			__global DES_bs_vector *B_global,
 			__global int *binary,
 			int num_loaded_hash,
-			volatile __global uint *output)  {
+			volatile __global uint *output,
+			uint offset)  {
 
 		unsigned int section = get_global_id(0), global_offset_B ,local_offset_K;
 		unsigned int local_id = get_local_id(0);
@@ -1126,13 +1174,10 @@ finalize_keys:
 
 		long int k=0, i;
 
-		if (DES_bs_all[section].keys_changed)
-			goto finalize_keys;
-body:
-		{
-			vtype zero = vzero;
-			DES_bs_clear_block
-		}
+		DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K, num_loaded_hash, offset);
+
+		for (i = 0; i < 64; i++)
+			B[i] = 0;
 
 		if(!section)
 			for(i = 0; i < num_loaded_hash; i++)
@@ -1158,20 +1203,18 @@ start:
 		rounds_and_swapped = 0x108;
 		if (--iterations) goto swap;
 
-		cmp(B, binary, num_loaded_hash, output, section);
-
 		tmp = 0 ;
-		for (i = 0; i < num_loaded_hash; i++) {
-				tmp = tmp | output[i];
-			if(tmp) break ;
+
+		cmp(B, binary, num_loaded_hash, output, section, &tmp);
+
+		if(tmp || (!num_loaded_hash)) {
+			for (i = 0; i < 64; i++)
+				B_global[global_offset_B + i] = (DES_bs_vector)B[i] ;
+
+			pass_gen(section, DES_bs_all, offset);
 		}
 
-		if(tmp || (!num_loaded_hash))
-		for (i = 0; i < 64; i++)
-			B_global[global_offset_B + i] = (DES_bs_vector)B[i] ;
-
 		return;
-
 swap:
 		H2();
 		k += 96;
@@ -1182,10 +1225,5 @@ next:
 		rounds_and_swapped = 8;
 		iterations--;
 		goto start;
-
-finalize_keys:
-		DES_bs_all[section].keys_changed = 0;
-	        DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K);
-		goto body;
 }
 #endif
