@@ -25,7 +25,7 @@
  * Core Option flags bitmasks (low 32 bits):
  */
 /* Some option that doesn't have its own flag is specified */
-#define FLG_NONE			0x00000000
+#define FLG_NONE			0x00000010
 /* An action requested */
 #define FLG_ACTION			0x00000001
 /* Password files specified */
@@ -54,8 +54,11 @@
 /* Incremental mode enabled */
 #define FLG_INC_CHK			0x00000800
 #define FLG_INC_SET			(FLG_INC_CHK | FLG_CRACKING_SET)
+/* Mask mode enabled */
+#define FLG_MASK_CHK			0x00001000
+#define FLG_MASK_SET			(FLG_MASK_CHK | FLG_CRACKING_SET)
 /* External mode or word filter enabled */
-#define FLG_EXTERNAL_CHK		0x00001000
+#define FLG_EXTERNAL_CHK		0x00002000
 #define FLG_EXTERNAL_SET \
 	(FLG_EXTERNAL_CHK | FLG_ACTION | FLG_CRACKING_SUP | FLG_PWD_SUP)
 /* Batch cracker */
@@ -155,8 +158,11 @@ struct options_main {
 /* Wordlist file name */
 	char *wordlist;
 
-/* Charset file name */
+/* Incremental mode name or charset file name */
 	char *charset;
+	
+/* Mask mode's mask */
+	char *mask;
 
 /* The non-default input character set (utf8, ansi, iso-8859-1, etc)
    as given by the user (might be with/without dash and lower/upper case

@@ -67,6 +67,7 @@ static int john_omp_threads_new;
 #include "single.h"
 #include "wordlist.h"
 #include "inc.h"
+#include "mask.h"
 #include "mkv.h"
 #include "external.h"
 #include "batch.h"
@@ -1139,6 +1140,9 @@ static void john_run(void)
 		if (options.flags & FLG_WORDLIST_CHK)
 			do_wordlist_crack(&database, options.wordlist,
 				(options.flags & FLG_RULES) != 0);
+		else
+		if (options.flags & FLG_MASK_CHK)
+			do_mask_crack(&database, options.mask);
 		else
 		if (options.flags & FLG_INC_CHK)
 			do_incremental_crack(&database, options.charset);

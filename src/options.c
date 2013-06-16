@@ -75,6 +75,8 @@ static struct opt_entry opt_list[] = {
 #endif
 	{"rules", FLG_RULES, FLG_RULES, FLG_WORDLIST_CHK, FLG_STDIN_CHK,
 		OPT_FMT_STR_ALLOC, &options.loader.activewordlistrules},
+	{"mask", FLG_MASK_SET, FLG_CRACKING_CHK,
+		0, OPT_REQ_PARAM, OPT_FMT_STR_ALLOC, &options.mask},
 	{"incremental", FLG_INC_SET, FLG_CRACKING_CHK,
 		0, 0, OPT_FMT_STR_ALLOC, &options.charset},
 	{"markov", FLG_MKV_SET, FLG_CRACKING_CHK,
@@ -214,6 +216,7 @@ static struct opt_entry opt_list[] = {
 "                          For a full list of NAME use --list=encodings\n" \
 "--rules[=SECTION]         enable word mangling rules for wordlist modes\n" \
 "--incremental[=MODE]      \"incremental\" mode [using section MODE]\n" \
+"--mask=MASK                mask mode using MASK\n" \
 "--markov[=OPTIONS]        \"Markov\" mode (see doc/MARKOV)\n" \
 "--external=MODE           external mode or word filter\n" \
 "--stdout[=LENGTH]         just output candidate passwords [cut at LENGTH]\n" \
