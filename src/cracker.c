@@ -120,7 +120,7 @@ void crk_init(struct db_main *db, void (*fix_state)(void),
 	crk_guesses = guesses;
 
 	if (db->loaded) {
-		size = crk_params.max_keys_per_crypt * sizeof(int64);
+		size = /*crk_params.max_keys_per_crypt **/ sizeof(int64) * 64 * 2048 * 64;
 		memset(crk_timestamps = mem_alloc_tiny(size,sizeof(int64)), -1, size);
 	} else
 		crk_stdout_key[0] = 0;

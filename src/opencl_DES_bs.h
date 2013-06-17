@@ -26,8 +26,8 @@
 #define MULTIPLIER                      (WORK_GROUP_SIZE*1024)
 
 
-#define MIN_KEYS_PER_CRYPT		(DES_BS_DEPTH)
-#define MAX_KEYS_PER_CRYPT		(DES_BS_DEPTH)
+#define MIN_KEYS_PER_CRYPT		MULTIPLIER
+#define MAX_KEYS_PER_CRYPT		MULTIPLIER
 
 #define GWS_CONFIG		        "des_GWS"
 

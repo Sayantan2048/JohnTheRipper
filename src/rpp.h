@@ -13,6 +13,7 @@
 #include "arch.h"
 #include "params.h"
 #include "config.h"
+#include "mask.h"
 
 /*
  * Character range.
@@ -88,9 +89,13 @@ extern int rpp_init(struct rpp_context *ctx, char *subsection);
  */
 extern void rpp_init_mask(struct rpp_context *ctx, char *mask);
 
+extern void rpp_process_rule(struct rpp_context *ctx); 
+
 /*
  * Returns a preprocessed rule and moves to the next one.
  */
 extern char *rpp_next(struct rpp_context *ctx);
+
+extern char *msk_next(struct rpp_context *, struct mask_context *);
 
 #endif

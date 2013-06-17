@@ -73,6 +73,13 @@ void opencl_DES_reset(struct db_main *db) {
 		HANDLE_CLERROR(err, "Create Buffer FAILED\n");
 
 	benchmark = 0;
+	
+	/* Expected number of keys to be generated on GPU per work item. Actual number will vary depending on the mask but it should be close */ 
+	db -> max_int_keys = 512;
+	
+	/* Each work item receives one key, so set tuned GWS for format */
+	db -> format -> params.max_keys_per_crypt = MULTIPLIER;
+	db -> format -> params.min_keys_per_crypt = MULTIPLIER ;
 
 	}
 }
@@ -556,7 +563,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 		HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], loaded_hash_gpu, CL_TRUE, 0, (salt -> count) * sizeof(int) * 2, loaded_hash, 0, NULL, NULL ), "Failed Copy data to gpu");
 		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 5, sizeof(int), &(salt->count)), "Set Kernel krnl Arg 5 :FAILED") ;
 		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 7, sizeof(cl_uint), &offset), "Set Kernel krnl Arg 7 :FAILED") ;
-		*pcount = (MULTIPLIER * 32) ;
+		*pcount = (MULTIPLIER * 32 ) ;
 		offset += MULTIPLIER * 32;
 	}
 

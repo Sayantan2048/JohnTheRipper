@@ -45,17 +45,17 @@ static void rpp_add_char(struct rpp_range *range, unsigned char c)
 	}
 
 	range->chars[range->count++] = (char)c;
-	printf("%c ",c);
+	//printf("%c ",c);
 }
 
-static void rpp_process_rule(struct rpp_context *ctx)
+void rpp_process_rule(struct rpp_context *ctx)
 {
 	struct rpp_range *range;
 	unsigned char *input, *output, *end;
 	unsigned char *saved_input;
 	unsigned char c1, c2, c;
 	int flag_p, flag_r;
-printf("process rule\n");
+
 	input = (unsigned char *)ctx->input->data;
 	output = (unsigned char *)ctx->output;
 	end = output + RULE_BUFFER_SIZE - 1;
@@ -66,7 +66,7 @@ printf("process rule\n");
 
 	while (*input && output < end)
 	switch (*input) {
-	/*case '\\':
+	case '\\':
 		if (!(c = *++input)) break;
 		c1 = ctx->count ? '0' : '1';
 		c2 = (ctx->count <= 9) ? '0' + ctx->count : '9';
@@ -95,10 +95,10 @@ printf("process rule\n");
 				break;
 			}
 			/* fall through */
-		//default:
-		//	*output++ = c;
-		//}
-		//break;
+		default:
+			*output++ = c;
+		}
+		break;
 
 	case '?':
 		if (ctx->input != &ctx->dummy_list_entry) /* not mask mode */
@@ -195,7 +195,7 @@ char *rpp_next(struct rpp_context *ctx)
 
 	done = 1;
 	if ((index = ctx->count - 1) >= 0) {
-		printf(" %d\n",index);
+		
 		do {
 			range = &ctx->ranges[index];
 			*range->pos = range->chars[range->index];
@@ -218,33 +218,80 @@ char *rpp_next(struct rpp_context *ctx)
 		done = index < 0;
 
 		index = ctx->count - 1;
-/*		do {
+		do {
 			range = &ctx->ranges[index];
 			if (range->flag_p <= 0 || range->flag_p > ctx->count)
 				continue;
 			if (ctx->ranges[range->flag_p - 1].flag_p)
 				continue; /* don't bother to support this */
-//			range->index = ctx->ranges[range->flag_p - 1].index;
-//			if (range->index >= range->count)
-//			range->index = range->count - 1;
-//		} while (index--);
+			range->index = ctx->ranges[range->flag_p - 1].index;
+			if (range->index >= range->count)
+			range->index = range->count - 1;
+		} while (index--);
 	}
 
-/*	if (ctx->refs_count > 0) {
+	if (ctx->refs_count > 0) {
 		int ref_index = ctx->refs_count - 1;
 		do {
 			index = ctx->refs[ref_index].range;
 			if (index < ctx->count) {
-				//range = &ctx->ranges[index];
-				//*ctx->refs[ref_index].pos = *range->pos;
+				range = &ctx->ranges[index];
+				*ctx->refs[ref_index].pos = *range->pos;
 			}
 		} while (ref_index--);
-	}*/
+	}
 
 	if (done) {
 		ctx->input = ctx->input->next;
 		ctx->count = -1;
 	}
-	printf("In Rpp%s\n",ctx->output);
+	
 	return ctx->output;
+}
+
+char *msk_next(struct rpp_context *rpp_ctx, struct mask_context *msk_ctx)
+{
+	struct rpp_range *range;
+	int index, done, i;
+	static int flag;
+
+	done = 1;
+	if(flag) return NULL;
+	
+	if ((index = rpp_ctx->count - 1) >= 0) {
+		
+		do {
+			range = &rpp_ctx->ranges[index];
+			*range->pos = range->chars[range->index];
+		} while (index--);
+
+		index = rpp_ctx->count - 1;
+		
+		do {	
+			for (i = 0; i < msk_ctx -> count; i++) 
+				if(msk_ctx -> activeRangePos[i] == index) goto next_idx;
+				
+			range = &rpp_ctx->ranges[index];
+			if (range->flag_p > 0)
+				continue;
+			if (++range->index < range->count) {
+				if (range->flag_p)
+					continue;
+				else
+					break;
+			}
+			range->index = 0;
+next_idx: 		;	
+		} while (index--);
+		done = index < 0;
+
+	}
+
+	if (done) {
+		rpp_ctx->input = rpp_ctx->input->next;
+		rpp_ctx->count = -1;
+		flag = 1;
+	}
+	
+	return rpp_ctx->output;
 }
