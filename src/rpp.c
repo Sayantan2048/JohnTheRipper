@@ -3,6 +3,12 @@
  * Copyright (c) 1996-98,2006,2009,2010,2011,2013 by Solar Designer
  */
 
+/*
+ * This software is Copyright (c) 2013 Sayantan Datta <std2048 at gmail dot com>
+ * and it is hereby released to the general public under the following terms:
+ * Redistribution and use in source and binary forms, with or without modification, are permitted.
+ */
+
 #include <string.h>
 
 #include "arch.h"
@@ -253,7 +259,7 @@ char *msk_next(struct rpp_context *rpp_ctx, struct mask_context *msk_ctx)
 {
 	struct rpp_range *range;
 	int index, done, i;
-	static int flag;
+	static int flag, skipcurrentidx = 0x7fffffff, processcurrentidx=0x7fffffff;
 
 	done = 1;
 	if(flag) return NULL;
@@ -268,9 +274,16 @@ char *msk_next(struct rpp_context *rpp_ctx, struct mask_context *msk_ctx)
 		index = rpp_ctx->count - 1;
 		
 		do {	
-			for (i = 0; i < msk_ctx -> count; i++) 
-				if(msk_ctx -> activeRangePos[i] == index) goto next_idx;
-				
+			if(skipcurrentidx == index) goto next_idx;
+			if(processcurrentidx == index) goto skip_search;
+			for (i = 0; i < msk_ctx -> count; i++) { 
+				if(msk_ctx -> activeRangePos[i] == index) {
+					skipcurrentidx = index;
+					goto next_idx;
+				}
+			}
+			processcurrentidx = index;
+skip_search:            ;			
 			range = &rpp_ctx->ranges[index];
 			if (range->flag_p > 0)
 				continue;
@@ -281,6 +294,7 @@ char *msk_next(struct rpp_context *rpp_ctx, struct mask_context *msk_ctx)
 					break;
 			}
 			range->index = 0;
+			
 next_idx: 		;	
 		} while (index--);
 		done = index < 0;

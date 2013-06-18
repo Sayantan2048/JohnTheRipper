@@ -8,8 +8,15 @@
  * There's ABSOLUTELY NO WARRANTY, express or implied.
  */
 
+/*
+ * This software is Copyright (c) 2013 Sayantan Datta <std2048 at gmail dot com>
+ * and it is hereby released to the general public under the following terms:
+ * Redistribution and use in source and binary forms, with or without modification, are permitted.
+ * There's ABSOLUTELY NO WARRANTY, express or implied.
+ */
+
 #include <stdio.h> /* for fprintf(stderr, ...) */
-#include <stdlib.h>
+#include <stdlib.h> /* for qsort */
 
 #include "misc.h" /* for error() */
 #include "logger.h"

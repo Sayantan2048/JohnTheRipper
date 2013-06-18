@@ -288,48 +288,11 @@ typedef struct{
 	kvand_or(vb, v7, m); 				\
 	kvor(kp[0], va, vb); 				\
 	kp++;
-
-#define GET_BIT \
-	(unsigned int)*(unsigned char *)&b[0] >> idx
-
-inline void cmp( __private DES_bs_vector *B,
-	  __global int *binary,
-	  int num_loaded_hash,
-	  volatile __global uint *output,
-	  int section,
-	  __private uint *flag) {
-
-
-	int value[2] , mask, i, bit;
-
-	for(i = 0; i < num_loaded_hash; i++) {
-
-		value[0] = binary[i];
-		value[1] = binary[i + num_loaded_hash];
-
-		mask = B[0] ^ -(value[0] & 1);
-
-		for (bit = 1; bit < 32; bit++)
-			mask |= B[bit] ^ -((value[0] >> bit) & 1);
-
-		for (; bit < 64; bit += 2) {
-			mask |= B[bit] ^ -((value[1] >> (bit & 0x1F)) & 1);
-			mask |= B[bit + 1] ^ -((value[1] >> ((bit + 1) & 0x1F)) & 1);
-
-			if (mask == ~(int)0) goto next_hash;
-		}
-		flag[0] = 1;
-		atomic_max( &output[i],section + 1) ;
-
-	next_hash: ;
-	}
-
-}
-#undef GET_BIT
-
+	
 void pass_gen(unsigned int section,
 	      __global DES_bs_transfer *DES_bs_all,
-	      unsigned int offset) {
+	      unsigned int offset,
+	      unsigned int opLoc) {
 #define MODULO_N 10
 	unsigned char key[8];
 	unsigned int weight = 1, init, num, i, tmp;
@@ -376,17 +339,63 @@ void pass_gen(unsigned int section,
 		if(!tmp) key[7] = 0;
 		else key[7] = (unsigned char)(48 + tmp % MODULO_N);
 
-		DES_bs_all[section].xkeys.c[0][i & 7][i >> 3] = key[0] ;
-		DES_bs_all[section].xkeys.c[1][i & 7][i >> 3] = key[1] ;
-		DES_bs_all[section].xkeys.c[2][i & 7][i >> 3] = key[2] ;
-		DES_bs_all[section].xkeys.c[3][i & 7][i >> 3] = key[3] ;
-		DES_bs_all[section].xkeys.c[4][i & 7][i >> 3] = key[4] ;
-		DES_bs_all[section].xkeys.c[5][i & 7][i >> 3] = key[5] ;
-		DES_bs_all[section].xkeys.c[6][i & 7][i >> 3] = key[6] ;
-		DES_bs_all[section].xkeys.c[7][i & 7][i >> 3] = key[7] ;
+		DES_bs_all[opLoc].xkeys.c[0][i & 7][i >> 3] = key[0] ;
+		DES_bs_all[opLoc].xkeys.c[1][i & 7][i >> 3] = key[1] ;
+		DES_bs_all[opLoc].xkeys.c[2][i & 7][i >> 3] = key[2] ;
+		DES_bs_all[opLoc].xkeys.c[3][i & 7][i >> 3] = key[3] ;
+		DES_bs_all[opLoc].xkeys.c[4][i & 7][i >> 3] = key[4] ;
+		DES_bs_all[opLoc].xkeys.c[5][i & 7][i >> 3] = key[5] ;
+		DES_bs_all[opLoc].xkeys.c[6][i & 7][i >> 3] = key[6] ;
+		DES_bs_all[opLoc].xkeys.c[7][i & 7][i >> 3] = key[7] ;
 
 	}
+}	
+
+#define GET_BIT \
+	(unsigned int)*(unsigned char *)&b[0] >> idx
+
+inline void cmp( __private DES_bs_vector *B,
+	  __global int *binary,
+	  int num_loaded_hash,
+	  volatile __global uint *output,
+	  int section,
+	  __private uint *flag,
+	  __global DES_bs_vector *B_global,
+	  __global DES_bs_transfer *DES_bs_all,
+	  unsigned int offset) {
+
+
+	int value[2] , mask, i, bit;
+
+	for(i = 0; i < num_loaded_hash; i++) {
+
+		value[0] = binary[i];
+		value[1] = binary[i + num_loaded_hash];
+
+		mask = B[0] ^ -(value[0] & 1);
+
+		for (bit = 1; bit < 32; bit++)
+			mask |= B[bit] ^ -((value[0] >> bit) & 1);
+
+		for (; bit < 64; bit += 2) {
+			mask |= B[bit] ^ -((value[1] >> (bit & 0x1F)) & 1);
+			mask |= B[bit + 1] ^ -((value[1] >> ((bit + 1) & 0x1F)) & 1);
+
+			if (mask == ~(int)0) goto next_hash;
+		}
+		flag[0] = 1;
+		mask = 64 * i;
+		for (bit = 0; bit < 64; bit++)
+				B_global[mask + bit] = (DES_bs_vector)B[bit] ;
+		pass_gen(section, DES_bs_all, offset, i);		
+		atomic_max( &output[i],i + 1) ;
+
+	next_hash: ;
+	}
+
 }
+#undef GET_BIT
+
 
 inline void load_v(__private kvtype *v, unsigned int weight, unsigned int j, unsigned int init ) {
 	unsigned int a, b, c, d;
@@ -1006,13 +1015,13 @@ start:         	H1_k0();
 
 		tmp = 0;
 
-		cmp(B, binary, num_loaded_hash, output, section, &tmp);
+		cmp(B, binary, num_loaded_hash, output, section, &tmp, B_global, DES_bs_all, offset);
 
-		if(tmp || (!num_loaded_hash)) {
+		if((!num_loaded_hash)) {
 			for (i = 0; i < 64; i++)
 				B_global[global_offset_B + i] = (DES_bs_vector)B[i] ;
 
-			pass_gen(section, DES_bs_all, offset);
+			//pass_gen(section, DES_bs_all, offset);
 		}
 
 }
@@ -1092,14 +1101,14 @@ start:
 		if (--iterations) goto swap;
 
 		tmp = 0 ;
-
-		cmp(B, binary, num_loaded_hash, output, section, &tmp);
-
-		if(tmp || (!num_loaded_hash)) {
+		
+		cmp(B, binary, num_loaded_hash, output, section, &tmp, B_global, DES_bs_all, offset);
+	
+		if((!num_loaded_hash)) {
 			for (i = 0; i < 64; i++)
 				B_global[global_offset_B + i] = (DES_bs_vector)B[i] ;
 
-			pass_gen(section, DES_bs_all, offset);
+			//pass_gen(section, DES_bs_all, offset);
 		}
 
 		return;
@@ -1205,13 +1214,13 @@ start:
 
 		tmp = 0 ;
 
-		cmp(B, binary, num_loaded_hash, output, section, &tmp);
+		cmp(B, binary, num_loaded_hash, output, section, &tmp, B_global, DES_bs_all, offset);
 
-		if(tmp || (!num_loaded_hash)) {
+		if((!num_loaded_hash)) {
 			for (i = 0; i < 64; i++)
 				B_global[global_offset_B + i] = (DES_bs_vector)B[i] ;
 
-			pass_gen(section, DES_bs_all, offset);
+			//pass_gen(section, DES_bs_all, offset);
 		}
 
 		return;
