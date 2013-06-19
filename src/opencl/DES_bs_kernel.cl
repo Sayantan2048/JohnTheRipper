@@ -354,13 +354,12 @@ void pass_gen(unsigned int section,
 #define GET_BIT \
 	(unsigned int)*(unsigned char *)&b[0] >> idx
 
-inline void cmp( __private DES_bs_vector *B,
+inline void cmp( __private vtype *B,
 	  __global int *binary,
 	  int num_loaded_hash,
 	  volatile __global uint *output,
 	  int section,
-	  __private uint *flag,
-	  __global DES_bs_vector *B_global,
+	   __global DES_bs_vector *B_global,
 	  __global DES_bs_transfer *DES_bs_all,
 	  unsigned int offset) {
 
@@ -383,11 +382,13 @@ inline void cmp( __private DES_bs_vector *B,
 
 			if (mask == ~(int)0) goto next_hash;
 		}
-		flag[0] = 1;
+				
 		mask = 64 * i;
 		for (bit = 0; bit < 64; bit++)
 				B_global[mask + bit] = (DES_bs_vector)B[bit] ;
-		pass_gen(section, DES_bs_all, offset, i);		
+				
+		pass_gen(section, DES_bs_all, offset, i);
+		
 		atomic_max( &output[i],i + 1) ;
 
 	next_hash: ;
@@ -957,36 +958,12 @@ inline void DES_bs_finalize_keys(unsigned int section,
 		B,4, 26, 14, 20);
 
 #if (HARDCODE_SALT & FULL_UNROLL)
-__kernel void DES_bs_25(constant uint *index768 __attribute__((max_constant_size(3072))),
-			__global int *index96 ,
-			__global DES_bs_transfer *DES_bs_all,
-			__global DES_bs_vector *B_global,
-			__global int *binary,
-			  int num_loaded_hash,
-			  volatile __global uint *output,
-			  uint offset) {
-
-		unsigned int section = get_global_id(0), global_offset_B ,local_offset_K;
-		unsigned int local_id = get_local_id(0), i, iterations;
-
-		global_offset_B = 64 * section;
-		local_offset_K  = 56 * local_id;
-
-		vtype B[64], tmp;
-
-		__local DES_bs_vector _local_K[56 * WORK_GROUP_SIZE] ;
-
-		if(!section)
-			for(i = 0; i < num_loaded_hash; i++)
-				output[i] = 0;
-
-		DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K, num_loaded_hash, offset);
-
+void des_loop(__private vtype *B, __local DES_bs_vector *_local_K, unsigned int iterations, unsigned int local_offset_K) {
+		vtype i ,tmp;
+		
 		for (i = 0; i < 64; i++)
 			B[i] = 0;
-
-		iterations = 25;
-
+	
 start:         	H1_k0();
 		H2_k0();
 		H1_k96();
@@ -1012,16 +989,40 @@ start:         	H1_k0();
 			}
 			goto start;
 		}
+}
+__kernel void DES_bs_25(constant uint *index768 __attribute__((max_constant_size(3072))),
+			__global int *index96 ,
+			__global DES_bs_transfer *DES_bs_all,
+			__global DES_bs_vector *B_global,
+			__global int *binary,
+			  int num_loaded_hash,
+			  volatile __global uint *output,
+			  uint offset) {
 
-		tmp = 0;
+		unsigned int section = get_global_id(0), global_offset_B ,local_offset_K;
+		unsigned int local_id = get_local_id(0), i, iterations;
 
-		cmp(B, binary, num_loaded_hash, output, section, &tmp, B_global, DES_bs_all, offset);
+		global_offset_B = 64 * section;
+		local_offset_K  = 56 * local_id;
+
+		vtype B[64];
+
+		__local DES_bs_vector _local_K[56 * WORK_GROUP_SIZE] ;
+
+		if(!section)
+			for(i = 0; i < num_loaded_hash; i++)
+				output[i] = 0;
+
+		DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K, num_loaded_hash, offset);
+
+		iterations = 25;
+		des_loop(B, _local_K, iterations, local_offset_K);
+
+		cmp(B, binary, num_loaded_hash, output, section, B_global, DES_bs_all, offset);
 
 		if((!num_loaded_hash)) {
 			for (i = 0; i < 64; i++)
-				B_global[global_offset_B + i] = (DES_bs_vector)B[i] ;
-
-			//pass_gen(section, DES_bs_all, offset);
+				B_global[global_offset_B + i] = (DES_bs_vector)B[i] ;			
 		}
 
 }
@@ -1038,6 +1039,55 @@ start:         	H1_k0();
 
 #define y48(p, q) vxorf(B[p]     , _local_K[q + local_offset_K])
 
+void des_loop(__private vtype *B,
+	      __local DES_bs_vector *_local_K, 
+	      __local ushort *_local_index768, 
+	      constant uint *index768, 
+	      unsigned int iterations, 
+	      unsigned int local_offset_K) {
+	      
+		int k = 0, i, rounds_and_swapped;
+
+		for (i = 0; i < 64; i++)
+			B[i] = 0;
+			
+		k=0;
+		rounds_and_swapped = 8;	
+		
+#ifndef RV7xx		
+		__local ushort *_index768_ptr ;
+#endif		
+		
+start:
+#ifndef RV7xx
+		_index768_ptr = _local_index768 + k ;
+#endif
+		H1_s();
+		if (rounds_and_swapped == 0x100) goto next;
+		H2_s();
+		k +=96;
+		rounds_and_swapped--;
+
+		if (rounds_and_swapped > 0) goto start;
+		k -= (0x300 + 48);
+		rounds_and_swapped = 0x108;
+		if (--iterations) goto swap;
+		
+		return;
+
+swap:
+		H2_k48();
+		k += 96;
+		if (--rounds_and_swapped) goto start;
+
+next:
+		k -= (0x300 - 48);
+		rounds_and_swapped = 8;
+		iterations--;
+		goto start;		
+		
+}
+
 __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_size(3072))),
 			  __global int *index96 ,
 			  __global DES_bs_transfer *DES_bs_all,
@@ -1053,29 +1103,19 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 		global_offset_B = 64 * section;
 		local_offset_K  = 56 * local_id;
 
-		vtype B[64], tmp;
+		vtype B[64], i;
 
 		__local DES_bs_vector _local_K[56*WORK_GROUP_SIZE] ;
 #ifndef RV7xx
 		__local ushort _local_index768[768] ;
-		__local ushort *_index768_ptr ;
 #endif
-		int iterations, rounds_and_swapped;
-
-		long int k = 0, i;
-
-		for (i = 0; i < 64; i++)
-			B[i] = 0;
+		int iterations;
 
 		DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K, num_loaded_hash, offset);
 
 		if(!section)
 			for(i = 0; i < num_loaded_hash; i++)
 				output[i] = 0;
-
-		k=0;
-		rounds_and_swapped = 8;
-		iterations = 25;
 
 #ifndef RV7xx
 		if (!local_id )
@@ -1084,25 +1124,10 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 
 		barrier(CLK_LOCAL_MEM_FENCE);
 #endif
+		iterations = 25;
+		des_loop(B, _local_K, _local_index768, index768, iterations, local_offset_K);
 
-start:
-#ifndef RV7xx
-		_index768_ptr = _local_index768 + k ;
-#endif
-		H1_s();
-		if (rounds_and_swapped == 0x100) goto next;
-		H2_s();
-		k +=96;
-		rounds_and_swapped--;
-
-		if (rounds_and_swapped > 0) goto start;
-		k -= (0x300 + 48);
-		rounds_and_swapped = 0x108;
-		if (--iterations) goto swap;
-
-		tmp = 0 ;
-		
-		cmp(B, binary, num_loaded_hash, output, section, &tmp, B_global, DES_bs_all, offset);
+		cmp(B, binary, num_loaded_hash, output, section, B_global, DES_bs_all, offset);
 	
 		if((!num_loaded_hash)) {
 			for (i = 0; i < 64; i++)
@@ -1112,17 +1137,6 @@ start:
 		}
 
 		return;
-
-swap:
-		H2_k48();
-		k += 96;
-		if (--rounds_and_swapped) goto start;
-
-next:
-		k -= (0x300 - 48);
-		rounds_and_swapped = 8;
-		iterations--;
-		goto start;
 }
 #endif
 
@@ -1158,6 +1172,44 @@ next:
 		rounds_and_swapped--;
 #endif
 
+void des_loop(__private vtype *B,
+	      __local DES_bs_vector *_local_K, 
+	      __local ushort *_local_index768, 
+	      constant uint *index768,
+	      __global int *index96,
+	      unsigned int iterations, 
+	      unsigned int local_offset_K) {
+	      
+		int k, i, rounds_and_swapped;
+
+		for (i = 0; i < 64; i++)
+			B[i] = 0;
+			
+		k=0;
+		rounds_and_swapped = 8;	
+start:
+		loop_body();
+
+		if (rounds_and_swapped > 0) goto start;
+		k -= (0x300 + 48);
+		rounds_and_swapped = 0x108;
+		if (--iterations) goto swap;
+		
+		return;
+
+swap:
+		H2();
+		k += 96;
+		if (--rounds_and_swapped) goto start;
+
+next:
+		k -= (0x300 - 48);
+		rounds_and_swapped = 8;
+		iterations--;
+		goto start;		
+		
+}
+
  __kernel void DES_bs_25_b( constant uint *index768 __attribute__((max_constant_size(3072))),
 			__global int *index96 ,
 			__global DES_bs_transfer *DES_bs_all,
@@ -1173,15 +1225,13 @@ next:
 		global_offset_B = 64 * section;
 		local_offset_K  = 56 * local_id;
 
-		vtype B[64], tmp;
+		vtype B[64];
 
 		__local DES_bs_vector _local_K[56 * WORK_GROUP_SIZE] ;
 #ifndef RV7xx
 		__local ushort _local_index768[768] ;
 #endif
-		int iterations, rounds_and_swapped;
-
-		long int k=0, i;
+		int iterations, i;
 
 		DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K, num_loaded_hash, offset);
 
@@ -1192,10 +1242,6 @@ next:
 			for(i = 0; i < num_loaded_hash; i++)
 				output[i] = 0;
 
-		k=0;
-		rounds_and_swapped = 8;
-		iterations = 25;
-
 #ifndef RV7xx
 		if (!local_id )
 			for (i = 0; i < 768; i++)
@@ -1204,35 +1250,16 @@ next:
 		barrier(CLK_LOCAL_MEM_FENCE);
 #endif
 
-start:
-		loop_body();
-
-		if (rounds_and_swapped > 0) goto start;
-		k -= (0x300 + 48);
-		rounds_and_swapped = 0x108;
-		if (--iterations) goto swap;
-
-		tmp = 0 ;
-
-		cmp(B, binary, num_loaded_hash, output, section, &tmp, B_global, DES_bs_all, offset);
+		iterations = 25;
+		des_loop(B, _local_K, _local_index768, index768, index96, iterations, local_offset_K);
+		
+		cmp(B, binary, num_loaded_hash, output, section, B_global, DES_bs_all, offset);
 
 		if((!num_loaded_hash)) {
 			for (i = 0; i < 64; i++)
-				B_global[global_offset_B + i] = (DES_bs_vector)B[i] ;
+				B_global[global_offset_B + i] = (DES_bs_vector)B[i]; 
 
-			//pass_gen(section, DES_bs_all, offset);
 		}
 
-		return;
-swap:
-		H2();
-		k += 96;
-		if (--rounds_and_swapped) goto start;
-
-next:
-		k -= (0x300 - 48);
-		rounds_and_swapped = 8;
-		iterations--;
-		goto start;
 }
 #endif
