@@ -62,6 +62,8 @@
 #define DES_BS_DEPTH                    32
 #define DES_bs_vector                   ARCH_WORD
 
+#define RULE_RANGES_MAX                 16
+
 typedef unsigned ARCH_WORD vtype ;
 
 #if no_byte_addressable(DEVICE_INFO)
@@ -91,6 +93,29 @@ typedef struct{
 
 	int keys_changed ;
 } DES_bs_transfer ;
+
+struct mask_range {
+  /* Charchters in the range */
+	char chars[0x100];
+	
+  /* Number of charchters in the range */	
+	int count;
+
+  /* Postion of the charcters in mask */
+	int pos;
+};
+
+  /* Simplified mask structure for processing the mask inside a format for password generation */ 
+struct mask_context {
+  /* Set of mask pacholders selected for processing inside the format */
+	struct mask_range ranges[RULE_RANGES_MAX];
+
+  /* Positions in mask for overwriting in the format */ 	  
+	int activeRangePos[RULE_RANGES_MAX];
+	
+  /* Number of postions for overwriting in the format */
+	int count;
+};
 
 #define vxorf(a, b) 					\
 	((a) ^ (b))
@@ -997,6 +1022,8 @@ __kernel void DES_bs_25(constant uint *index768 __attribute__((max_constant_size
 			__global int *binary,
 			  int num_loaded_hash,
 			  volatile __global uint *output,
+			  __global char *input_keys,
+			   __global struct mask_context *msk_ctx,
 			  uint offset) {
 
 		unsigned int section = get_global_id(0), global_offset_B ,local_offset_K;
@@ -1006,7 +1033,7 @@ __kernel void DES_bs_25(constant uint *index768 __attribute__((max_constant_size
 		local_offset_K  = 56 * local_id;
 
 		vtype B[64];
-
+		
 		__local DES_bs_vector _local_K[56 * WORK_GROUP_SIZE] ;
 
 		if(!section)
@@ -1095,6 +1122,8 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 			  __global int *binary,
 			  int num_loaded_hash,
 			  volatile __global uint *output,
+			  __global char *input_keys,
+			  __global struct mask_context *msk_ctx,
 			  uint offset) {
 
 		unsigned int section = get_global_id(0), global_offset_B, local_offset_K;
@@ -1104,7 +1133,7 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 		local_offset_K  = 56 * local_id;
 
 		vtype B[64], i;
-
+		
 		__local DES_bs_vector _local_K[56*WORK_GROUP_SIZE] ;
 #ifndef RV7xx
 		__local ushort _local_index768[768] ;
@@ -1181,7 +1210,7 @@ void des_loop(__private vtype *B,
 	      unsigned int local_offset_K) {
 	      
 		int k, i, rounds_and_swapped;
-
+		
 		for (i = 0; i < 64; i++)
 			B[i] = 0;
 			
@@ -1217,21 +1246,39 @@ next:
 			__global int *binary,
 			int num_loaded_hash,
 			volatile __global uint *output,
+			__global char *input_keys,
+			__global struct mask_context *msk_ctx,
 			uint offset)  {
 
 		unsigned int section = get_global_id(0), global_offset_B ,local_offset_K;
 		unsigned int local_id = get_local_id(0);
+		int iterations, i;
 
 		global_offset_B = 64 * section;
 		local_offset_K  = 56 * local_id;
 
 		vtype B[64];
+		
+		/*if(section == 10)
+		{for(i = 0;i < 8 ; i++ )
+		printf("%c",input_keys[section*8 + i]);
+		printf("Inkernel\n");
+		}*/
+		/*
+		int j;
+		if(!section)
+		if(num_loaded_hash) {
+		for(i = 0; i < msk_ctx[0].count; i++)
+			for(j = 0; j < msk_ctx[0].ranges[msk_ctx[0].activeRangePos[i]].count; j++)
+		printf("%c ",msk_ctx[0].ranges[msk_ctx[0].activeRangePos[i]].chars[j]);
+		printf("IN kernel%d\n",msk_ctx[0].count);
+		}*/
 
 		__local DES_bs_vector _local_K[56 * WORK_GROUP_SIZE] ;
 #ifndef RV7xx
 		__local ushort _local_index768[768] ;
 #endif
-		int iterations, i;
+		
 
 		DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K, num_loaded_hash, offset);
 

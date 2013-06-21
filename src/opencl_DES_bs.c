@@ -149,63 +149,7 @@ void opencl_DES_bs_init(int LM, int cpt,int block)
 
 }
 
-void opencl_DES_bs_set_key(char *key, int index)
-{
-	unsigned char *dst;
-	unsigned int sector,key_index;
-	unsigned int flag=key[0];
-	init_t();
-	sector = index >> DES_BS_LOG2;
-	key_index = index & (DES_BS_DEPTH - 1);
-	dst = opencl_DES_bs_all[sector].pxkeys[key_index];
 
-	opencl_DES_bs_data[sector].keys_changed = 1;
-
-	dst[0] = 				(!flag) ? 0 : key[0];
-	dst[sizeof(DES_bs_vector) * 8]      =	(!flag) ? 0 : key[1];
-	flag = flag&&key[1] ;
-	dst[sizeof(DES_bs_vector) * 8 * 2]  =	(!flag) ? 0 : key[2];
-	flag = flag&&key[2];
-	dst[sizeof(DES_bs_vector) * 8 * 3]  =	(!flag) ? 0 : key[3];
-	flag = flag&&key[3];
-	dst[sizeof(DES_bs_vector) * 8 * 4]  =	(!flag) ? 0 : key[4];
-	flag = flag&&key[4]&&key[5];
-	dst[sizeof(DES_bs_vector) * 8 * 5]  =	(!flag) ? 0 : key[5];
-	flag = flag&&key[6];
-	dst[sizeof(DES_bs_vector) * 8 * 6]  =	(!flag) ? 0 : key[6];
-	dst[sizeof(DES_bs_vector) * 8 * 7]  =	(!flag) ? 0 : key[7];
-/*
-	if (!key[0]) goto fill8;
-	*dst = key[0];
-	*(dst + sizeof(DES_bs_vector) * 8) = key[1];
-	*(dst + sizeof(DES_bs_vector) * 8 * 2) = key[2];
-	if (!key[1]) goto fill6;
-	if (!key[2]) goto fill5;
-	*(dst + sizeof(DES_bs_vector) * 8 * 3) = key[3];
-	*(dst + sizeof(DES_bs_vector) * 8 * 4) = key[4];
-	if (!key[3]) goto fill4;
-	if (!key[4] || !key[5]) goto fill3;
-	*(dst + sizeof(DES_bs_vector) * 8 * 5) = key[5];
-	if (!key[6]) goto fill2;
-	*(dst + sizeof(DES_bs_vector) * 8 * 6) = key[6];
-	*(dst + sizeof(DES_bs_vector) * 8 * 7) = key[7];
-	return;
-fill8:
-	dst[0] = 0;
-	dst[sizeof(DES_bs_vector) * 8] = 0;
-fill6:
-	dst[sizeof(DES_bs_vector) * 8 * 2] = 0;
-fill5:
-	dst[sizeof(DES_bs_vector) * 8 * 3] = 0;
-fill4:
-	dst[sizeof(DES_bs_vector) * 8 * 4] = 0;
-fill3:
-	dst[sizeof(DES_bs_vector) * 8 * 5] = 0;
-fill2:
-	dst[sizeof(DES_bs_vector) * 8 * 6] = 0;
-	dst[sizeof(DES_bs_vector) * 8 * 7] = 0;
-	*/
-}
 /*
 void opencl_DES_bs_set_key_LM(char *key, int index)
 {

@@ -22,7 +22,11 @@
 #ifndef _JOHN_MASK_H
 #define _JOHN_MASK_H
 
-#include "loader.h"
+/*
+ * Some format methods accept pointers to these, yet we can't just include
+ * loader.h here because that would be a circular dependency.
+ */
+struct db_main;
 
   /* Range of charcters for a placeholder in the mask */
 struct mask_range {

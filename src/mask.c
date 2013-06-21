@@ -27,15 +27,61 @@
 #include "cracker.h"
 #include "john.h"
 #include "mask.h"
+#include "loader.h"
 
 static struct mask_context msk_ctx;
 
-void set_mask(struct rpp_context *rpp_ctx, struct db_main *db) {
+  /* calculates nCr combinations */ 
+void combinationUtil(void *arr, int data[], int start, int end, int index, int r, int target, int *isOptimal);
+
+void calcCombination(void *arr, int n, int target)
+{
+    int data[n], isOptimal = 0x7fffffff, i;
+    ((struct mask_context*)arr) -> count = 0x7fffffff;
+    
+    for(i = 1; i<= n ;i++) 
+		combinationUtil(arr, data, 0, n-1, 0, i, target, &isOptimal);
+    
+}
+ 
+void combinationUtil(void *arr, int data[], int start, int end, int index, int r, int target, int *isOptimal)
+{
+    int i;
+    
+    if (index == r)
+    {	int j, tmp = 1;
+        for ( j=0; j<r; j++)
+             tmp *= ((struct mask_context*)arr) -> ranges[data[j]].count;
+	tmp -= target;
+	tmp = tmp<0?-tmp:tmp;
+	
+	if(tmp <= *isOptimal ) {
+		if((r < ((struct mask_context*)arr) -> count) || (tmp < *isOptimal)) {
+			((struct mask_context*)arr) -> count = r;
+			for ( j=0; j<r; j++)
+				((struct mask_context*)arr) -> activeRangePos[j] = data[j];
+			*isOptimal = tmp;
+		}
+	}
+	return;
+    }
+    
+    for (i=start; i<=end && end-i+1 >= r-index; i++)
+    {
+        data[index] = ((struct mask_context*)arr) -> ranges[i].pos ;
+        combinationUtil(arr, data, i+1, end, index+1, r, target, isOptimal);
+    }
+} 
+
+static void set_mask(struct rpp_context *rpp_ctx, struct db_main *db) {
 		
 	int i, j, keys_limit, isOptimal = 0x7fffffff;
 	int storei[0x100], ctr, flag;
-	int comparison_fn_t (const void *a, const void *b) { 
+	int comparison_fn_cc (const void *a, const void *b) { 
 		return ((struct mask_range*)b) -> count - ((struct mask_range*)a) -> count; 
+	}
+	int comparison_fn_pos (const void *a, const void *b) { 
+		return ((struct mask_range*)a) -> pos - ((struct mask_range*)b) -> pos; 
 	}
 	
 	for(i = 0; i < rpp_ctx->count; i++ ) {
@@ -44,45 +90,18 @@ void set_mask(struct rpp_context *rpp_ctx, struct db_main *db) {
 		msk_ctx.ranges[i].pos = rpp_ctx->ranges[i].pos - rpp_ctx->output;
 		
 	}
-		
-	qsort ((struct mask_range*) msk_ctx.ranges, (size_t)rpp_ctx->count, sizeof(struct mask_range), comparison_fn_t);
 	
-	keys_limit = 1;
-	msk_ctx.count = 0;
-	ctr = 0;
-	flag = 0;
-	for (i = 0; i < rpp_ctx->count; i++) {
-		keys_limit *= msk_ctx.ranges[i].count;
-		storei[ctr++] = i;
-		if (keys_limit > db -> max_int_keys) {
-			if (isOptimal > (keys_limit - db -> max_int_keys)) {
-				isOptimal = keys_limit - db -> max_int_keys;
-				for (j = 0; j < ctr; j++ )
-					msk_ctx.activeRangePos[msk_ctx.count + j - flag] = msk_ctx.ranges[storei[j]].pos;
-				msk_ctx.count += (ctr - flag);
-				flag = 1;
-			}	    
-			keys_limit /= msk_ctx.ranges[i].count;
-			ctr = 0;
-			continue;
-		}
-		else   
-		if (isOptimal > (db -> max_int_keys - keys_limit)) {
-			for (j = 0; j < ctr; j++ )
-				msk_ctx.activeRangePos[msk_ctx.count + j - flag] = msk_ctx.ranges[storei[j]].pos;
-				isOptimal = db -> max_int_keys - keys_limit;
-				msk_ctx.count += (ctr - flag);
-				flag = 0;
-				ctr = 0;
-			}
-	}
+	calcCombination(&msk_ctx, rpp_ctx -> count, db -> max_int_keys);
 	
-	db -> msk_ctx = &msk_ctx;
-/*	
+	memcpy(db ->msk_ctx, &msk_ctx, sizeof(struct mask_context));
+	/*
 	for(i = 0; i < msk_ctx.count; i++)
-	  printf(" %d ", msk_ctx.activeRangePos[i]);
+	  printf(" %d ", msk_ctx.activeRangePos[i]);*/
+	for(i = 0; i < msk_ctx.count; i++)
+			for(j = 0; j < msk_ctx.ranges[msk_ctx.activeRangePos[i]].count; j++)
+		printf("%c ",msk_ctx.ranges[msk_ctx.activeRangePos[i]].chars[j]);
 	
-	printf("\n");*/
+	printf("\n");
   
 }
 
@@ -113,6 +132,8 @@ void do_mask_crack(struct db_main *db, char *mask)
 #endif
 	rpp_process_rule(&rpp_ctx);
 	
+	db->msk_ctx = (struct mask_context*) mem_alloc(sizeof(struct mask_context));
+	
 	if(db -> max_int_keys)
 		set_mask(&rpp_ctx, db);
 	
@@ -123,6 +144,8 @@ void do_mask_crack(struct db_main *db, char *mask)
 	}
 
 	crk_done();
+	
+	MEM_FREE(db -> msk_ctx);
 
 #if 0
 	rec_done(event_abort);

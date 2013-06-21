@@ -12,6 +12,7 @@
 
 #include "options.h"
 #include "opencl_DES_bs.h"
+//#include "mask.h"
 
 #define LOG_SIZE 1024*16
 
@@ -22,7 +23,7 @@ DES_bs_vector *B;
 
 static cl_kernel krnl[MAX_PLATFORMS * MAX_DEVICES_PER_PLATFORM][4096];
 static cl_int err;
-static cl_mem index768_gpu, index96_gpu, opencl_DES_bs_data_gpu, B_gpu, cmp_out_gpu, loaded_hash_gpu;
+static cl_mem index768_gpu, index96_gpu, opencl_DES_bs_data_gpu, B_gpu, cmp_out_gpu, loaded_hash_gpu, input_keys_gpu, mask_gpu;
 static int set_salt = 0;
 static   WORD current_salt;
 static size_t DES_local_work_size = WORK_GROUP_SIZE;
@@ -30,6 +31,9 @@ static int *loaded_hash;
 static unsigned int *cmp_out, num_loaded_hash, min, max ;
 static int benchmark = 1;
 static unsigned int offset = 0;
+static unsigned char *input_keys;
+static struct mask_context msk_ctx;
+static struct db_main *DB;
 
 void DES_opencl_clean_all_buffer()
 {
@@ -44,6 +48,8 @@ void DES_opencl_clean_all_buffer()
 	HANDLE_CLERROR(clReleaseMemObject(index96_gpu), errMsg);
 	HANDLE_CLERROR(clReleaseMemObject(opencl_DES_bs_data_gpu), errMsg);
 	HANDLE_CLERROR(clReleaseMemObject(B_gpu), errMsg);
+	HANDLE_CLERROR(clReleaseMemObject(input_keys_gpu), errMsg);
+	HANDLE_CLERROR(clReleaseMemObject(mask_gpu), errMsg);
 	clReleaseMemObject(cmp_out_gpu);
 	clReleaseMemObject(loaded_hash_gpu);
 	for( i = 0; i < 4096; i++)
@@ -71,15 +77,17 @@ void opencl_DES_reset(struct db_main *db) {
 	cmp_out_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, (db->password_count)*sizeof(unsigned int), NULL, &err);
 	if(cmp_out_gpu == (cl_mem)0)
 		HANDLE_CLERROR(err, "Create Buffer FAILED\n");
-
+	
 	benchmark = 0;
 	
 	/* Expected number of keys to be generated on GPU per work item. Actual number will vary depending on the mask but it should be close */ 
-	db -> max_int_keys = 512;
+	db -> max_int_keys = 32;
 	
-	/* Each work item receives one key, so set tuned GWS for format */
+	/* Each work item receives one key, so set the following parameters to tuned GWS for format */
 	db -> format -> params.max_keys_per_crypt = MULTIPLIER;
-	db -> format -> params.min_keys_per_crypt = MULTIPLIER ;
+	db -> format -> params.min_keys_per_crypt = MULTIPLIER;
+	
+	DB = db;
 
 	}
 }
@@ -89,6 +97,70 @@ void opencl_DES_bs_init_global_variables() {
 	B = (DES_bs_vector*) mem_alloc (MULTIPLIER * 64 * sizeof(DES_bs_vector));
 	opencl_DES_bs_all = (opencl_DES_bs_combined*) mem_alloc (MULTIPLIER * sizeof(opencl_DES_bs_combined));
 	opencl_DES_bs_data = (opencl_DES_bs_transfer*) mem_alloc (MULTIPLIER * sizeof(opencl_DES_bs_transfer));
+	input_keys = (unsigned char *) mem_alloc( MULTIPLIER * 8);       
+}
+
+void opencl_DES_bs_set_key(char *key, int index)
+{	
+	if(benchmark) {
+		unsigned char *dst;
+		unsigned int sector,key_index;
+		unsigned int flag=key[0];
+	
+		sector = index >> DES_BS_LOG2;
+		key_index = index & (DES_BS_DEPTH - 1);
+		dst = opencl_DES_bs_all[sector].pxkeys[key_index];
+
+		opencl_DES_bs_data[sector].keys_changed = 1;
+
+		dst[0] 				    =	(!flag) ? 0 : key[0];
+		dst[sizeof(DES_bs_vector) * 8]	    = 	(!flag) ? 0 : key[1];
+		flag = flag&&key[1] ;
+		dst[sizeof(DES_bs_vector) * 8 * 2]  =	(!flag) ? 0 : key[2];
+		flag = flag&&key[2];
+		dst[sizeof(DES_bs_vector) * 8 * 3]  =	(!flag) ? 0 : key[3];
+		flag = flag&&key[3];
+		dst[sizeof(DES_bs_vector) * 8 * 4]  =	(!flag) ? 0 : key[4];
+		flag = flag&&key[4]&&key[5];
+		dst[sizeof(DES_bs_vector) * 8 * 5]  =	(!flag) ? 0 : key[5];
+		flag = flag&&key[6];
+		dst[sizeof(DES_bs_vector) * 8 * 6]  =	(!flag) ? 0 : key[6];
+		dst[sizeof(DES_bs_vector) * 8 * 7]  =	(!flag) ? 0 : key[7];
+/*
+		if (!key[0]) goto fill8;
+		*dst = key[0];
+		*(dst + sizeof(DES_bs_vector) * 8) = key[1];
+		*(dst + sizeof(DES_bs_vector) * 8 * 2) = key[2];
+		if (!key[1]) goto fill6;
+		if (!key[2]) goto fill5;
+		*(dst + sizeof(DES_bs_vector) * 8 * 3) = key[3];
+		*(dst + sizeof(DES_bs_vector) * 8 * 4) = key[4];
+		if (!key[3]) goto fill4;
+		if (!key[4] || !key[5]) goto fill3;
+		*(dst + sizeof(DES_bs_vector) * 8 * 5) = key[5];
+		if (!key[6]) goto fill2;
+		*(dst + sizeof(DES_bs_vector) * 8 * 6) = key[6];
+		*(dst + sizeof(DES_bs_vector) * 8 * 7) = key[7];
+		return;
+fill8:
+		dst[0] = 0;
+		dst[sizeof(DES_bs_vector) * 8] = 0;
+fill6:
+		dst[sizeof(DES_bs_vector) * 8 * 2] = 0;
+fill5:
+		dst[sizeof(DES_bs_vector) * 8 * 3] = 0;
+fill4:
+		dst[sizeof(DES_bs_vector) * 8 * 4] = 0;
+fill3:
+		dst[sizeof(DES_bs_vector) * 8 * 5] = 0;
+fill2:
+		dst[sizeof(DES_bs_vector) * 8 * 6] = 0;
+		dst[sizeof(DES_bs_vector) * 8 * 7] = 0;
+*/
+	}
+	
+	else  	memcpy(input_keys + 8 * index, key , 8);
+			
 }
 
 
@@ -314,24 +386,33 @@ static void build_kernel_exp(int dev_id, char *options)
 //}
 
 static void init_dev()
-{
+{	
+	char *errMsg = "Create Buffer Failed";
 	opencl_init_dev(ocl_gpu_id);
 
 	opencl_DES_bs_data_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, MULTIPLIER * sizeof(opencl_DES_bs_transfer), NULL, &err);
 	if(opencl_DES_bs_data_gpu == (cl_mem)0)
-		HANDLE_CLERROR(err, "Create Buffer FAILED\n");
+		HANDLE_CLERROR(err, errMsg);
 
 	index768_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, 768 * sizeof(unsigned int), NULL, &err);
 	if(index768_gpu == (cl_mem)0)
-		HANDLE_CLERROR(err, "Create Buffer FAILED\n");
+		HANDLE_CLERROR(err, errMsg);
 
 	index96_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, 96 * sizeof(unsigned int), NULL, &err);
 	if(index96_gpu == (cl_mem)0)
-		HANDLE_CLERROR(err, "Create Buffer FAILED\n");
+		HANDLE_CLERROR(err, errMsg);
 
 	B_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, 64 * MULTIPLIER * sizeof(DES_bs_vector), NULL, &err);
 	if(B_gpu == (cl_mem)0)
-		HANDLE_CLERROR(err, "Create Buffer FAILED\n");
+		HANDLE_CLERROR(err, errMsg);
+	
+	input_keys_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, 8 * MULTIPLIER , NULL, &err);
+	if(input_keys_gpu == (cl_mem)0)
+		HANDLE_CLERROR(err, errMsg);
+	
+	mask_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, sizeof(struct mask_context) , NULL, &err);
+	if(mask_gpu == (cl_mem)0)
+		HANDLE_CLERROR(err, errMsg);
 
 	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], index768_gpu, CL_TRUE, 0, 768 * sizeof(unsigned int), index768, 0, NULL, NULL ), "Failed Copy data to gpu");
 
@@ -426,6 +507,14 @@ void DES_bs_select_device(struct fmt_main *fmt)
 	cmp_out_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, sizeof(unsigned int), NULL, &err);
 	if(cmp_out_gpu == (cl_mem)0)
 		HANDLE_CLERROR(err, errMsg);
+	
+	input_keys_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, 8 * MULTIPLIER , NULL, &err);
+	if(input_keys_gpu == (cl_mem)0)
+		HANDLE_CLERROR(err, errMsg);
+	
+	mask_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, sizeof(struct mask_context) , NULL, &err);
+	if(mask_gpu == (cl_mem)0)
+		HANDLE_CLERROR(err, errMsg);
 
 	HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 0, sizeof(cl_mem), &index768_gpu), "Set Kernel Arg FAILED arg0\n");
 	HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 1, sizeof(cl_mem), &index96_gpu), "Set Kernel Arg FAILED arg1\n");
@@ -433,8 +522,9 @@ void DES_bs_select_device(struct fmt_main *fmt)
 	HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 3, sizeof(cl_mem), &B_gpu), "Set Kernel Arg FAILED arg4\n");
 	HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 4, sizeof(cl_mem), &loaded_hash_gpu), "Set Kernel krnl Arg 4 :FAILED") ;
 	HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 6, sizeof(cl_mem), &cmp_out_gpu), "Set Kernel Arg krnl FAILED arg6\n");
-
-
+	HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 7, sizeof(cl_mem), &input_keys_gpu), "Set Kernel Arg krnl FAILED arg7\n");
+	HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 8, sizeof(cl_mem), &mask_gpu), "Set Kernel Arg krnl FAILED arg8\n");
+	
 	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], index768_gpu, CL_TRUE, 0, 768*sizeof(unsigned int), index768, 0, NULL, NULL ), "Failed Copy data to gpu");
 
 	if (!global_work_size)
@@ -494,7 +584,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 {
 	int keys_count = *pcount;
 	unsigned int section = 0, keys_count_multiple;
-	static unsigned int pos ;
+	static unsigned int pos, flag = 1 ;
 	cl_event evnt;
 	size_t N,M;
 
@@ -537,19 +627,21 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 			HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 3, sizeof(cl_mem),&B_gpu), "Set Kernel Arg FAILED arg3\n");
 			HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 4, sizeof(cl_mem), &loaded_hash_gpu), "Set Kernel krnl Arg 4 :FAILED") ;
 			HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 6, sizeof(cl_mem),&cmp_out_gpu), "Set Kernel Arg krnl FAILED arg6\n");
-
+			HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 7, sizeof(cl_mem), &input_keys_gpu), "Set Kernel Arg krnl FAILED arg7\n");
+			HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 8, sizeof(cl_mem), &mask_gpu), "Set Kernel Arg krnl FAILED arg8\n");
+			
 			stored_salt[current_salt] = current_salt;
 		}
 		//HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id],index96_gpu,CL_TRUE,0,96*sizeof(unsigned int),index96,0,NULL,NULL ), "Failed Copy data to gpu");
 		set_salt = 0;
+	
+	 printf("NEW SALT\n"); 
 	}
-
-
 
 	if(salt) {
 		struct db_password *pw;
 		int i = 0, *bin;
-
+				
 		pw = salt -> list;
 		do {
 			  bin = (int *)pw -> binary;
@@ -561,8 +653,20 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 		num_loaded_hash = (salt -> count);
 		//printf("%d\n",loaded_hash[salt->count-1]);
 		HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], loaded_hash_gpu, CL_TRUE, 0, (salt -> count) * sizeof(int) * 2, loaded_hash, 0, NULL, NULL ), "Failed Copy data to gpu");
+		HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], input_keys_gpu, CL_TRUE, 0, 8 * MULTIPLIER, input_keys, 0, NULL, NULL ), "Failed Copy data to gpu");
 		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 5, sizeof(int), &(salt->count)), "Set Kernel krnl Arg 5 :FAILED") ;
-		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 7, sizeof(cl_uint), &offset), "Set Kernel krnl Arg 7 :FAILED") ;
+		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 9, sizeof(cl_uint), &offset), "Set Kernel krnl Arg 8 :FAILED") ;
+		
+		if(flag && !benchmark) {
+			if(!DB->msk_ctx) { 
+				fprintf(stderr, "No given mask.Exiting...\n"); 
+				exit(EXIT_FAILURE);
+			}
+			memcpy(&msk_ctx, DB->msk_ctx, sizeof(struct mask_context));
+			HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], mask_gpu, CL_TRUE, 0, sizeof(struct mask_context), &msk_ctx, 0, NULL, NULL ), "Failed Copy data to gpu");
+			flag = 0;
+		}
+		
 		*pcount = (MULTIPLIER * 32 ) ;
 		offset += MULTIPLIER * 32;
 	}
@@ -571,7 +675,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 		int tmp = 0;
 		HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id],opencl_DES_bs_data_gpu,CL_TRUE,0,MULTIPLIER*sizeof(opencl_DES_bs_transfer),opencl_DES_bs_data,0,NULL,NULL ), "Failed Copy data to gpu");
 		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 5, sizeof(int), &tmp), "Set Kernel krnl Arg 5 :FAILED") ;
-		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 7, sizeof(unsigned int), &tmp), "Set Kernel krnl Arg 7 :FAILED") ;
+		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][pos], 9, sizeof(unsigned int), &tmp), "Set Kernel krnl Arg 7 :FAILED") ;
 	}
 
 	err = clEnqueueNDRangeKernel(queue[ocl_gpu_id], krnl[ocl_gpu_id][pos], 1, NULL, &N, &M, 0, NULL, &evnt);
@@ -624,6 +728,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 {
 	int keys_count = *pcount;
 	unsigned int section = 0, keys_count_multiple;
+	static int flag = 1;
 	cl_event evnt;
 	size_t N, M;
 
@@ -639,7 +744,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 		N = (section / DES_local_work_size + 1) * DES_local_work_size ;
 	//else
 		N = MULTIPLIER;
-
+	
 	if (set_salt == 1) {
 		HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], index96_gpu, CL_TRUE, 0, 96 * sizeof(unsigned int), index96, 0, NULL, NULL), "Failed Copy data to gpu");
 		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 4, sizeof(cl_mem), &loaded_hash_gpu), "Set Kernel krnl Arg 4 :FAILED");
@@ -650,7 +755,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 	if(salt) {
 		int i = 0, *bin;
 		struct db_password *pw;
-
+		
 		pw = salt -> list;
 		do {
 			  bin = (int *)pw -> binary;
@@ -662,8 +767,21 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 		num_loaded_hash = (salt -> count);
 		//printf("%d\n",loaded_hash[salt->count-1 + salt -> count]);
 		HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], loaded_hash_gpu, CL_TRUE, 0, (salt -> count) * sizeof(int) * 2, loaded_hash, 0, NULL, NULL ), "Failed Copy data to gpu");
+		HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], input_keys_gpu, CL_TRUE, 0, 8 * MULTIPLIER, input_keys, 0, NULL, NULL ), "Failed Copy data to gpu");
 		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 5, sizeof(int), &(salt->count)), "Set Kernel krnl Arg 5 :FAILED") ;
-		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 7, sizeof(unsigned int), &offset), "Set Kernel krnl Arg 7 :FAILED") ;
+		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 9, sizeof(unsigned int), &offset), "Set Kernel krnl Arg 9 :FAILED") ;
+		
+		if(flag && !benchmark) {
+			
+			if(!DB->msk_ctx) { 
+				fprintf(stderr, "No given mask.Exiting...\n"); 
+				exit(EXIT_FAILURE);
+			}
+			memcpy(&msk_ctx, DB->msk_ctx, sizeof(struct mask_context));
+			HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], mask_gpu, CL_TRUE, 0, sizeof(struct mask_context), &msk_ctx, 0, NULL, NULL ), "Failed Copy data to gpu");
+			flag = 0;
+		}
+		
 		*pcount = (MULTIPLIER * 32) ;
 		offset += MULTIPLIER * 32 ;
 	}
@@ -672,7 +790,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 		int tmp = 0;
 		HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], opencl_DES_bs_data_gpu, CL_TRUE, 0, MULTIPLIER * sizeof(opencl_DES_bs_transfer), opencl_DES_bs_data, 0, NULL, NULL ), "Failed Copy data to gpu");
 		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 5, sizeof(int), &tmp), "Set Kernel krnl Arg 5 :FAILED") ;
-		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 7, sizeof(unsigned int), &tmp), "Set Kernel krnl Arg 7 :FAILED") ;
+		HANDLE_CLERROR(clSetKernelArg(krnl[ocl_gpu_id][0], 9, sizeof(unsigned int), &tmp), "Set Kernel krnl Arg 9 :FAILED") ;
 	}
 
 

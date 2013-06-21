@@ -300,7 +300,7 @@ extern int password_hash_thresholds[PASSWORD_HASH_SIZES];
 #define RULE_BUFFER_SIZE		0x400
 
 /*
- * Maximum number of character ranges for rules.
+ * Maximum number of character ranges for rules. Check OpenCL formats if the following parameter is changed. 
  */
 #define RULE_RANGES_MAX			16
 

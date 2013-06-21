@@ -16,6 +16,7 @@
 #ifndef BENCH_BUILD
 #include "list.h"
 #include "formats.h"
+#include "mask.h"
 #endif
 
 /*
