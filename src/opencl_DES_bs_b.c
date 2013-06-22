@@ -92,6 +92,37 @@ void opencl_DES_reset(struct db_main *db) {
 	}
 }
 
+static void check_mask_descrypt(struct mask_context *msk_ctx) {
+	int i, j, k ;
+	if(msk_ctx -> count > 8) msk_ctx -> count = 8;
+	
+  /* Assumes msk_ctx -> activeRangePos[] is sorted. Check if any range exceeds des key limit */
+	for( i = 0; i < msk_ctx->count; i++) 
+		if(msk_ctx -> activeRangePos[i] >= 8) {
+			msk_ctx->count = i;
+			break;  
+		}
+	j = 0;
+	i = 0;
+	k = 0;
+ /* Append non-active portion to activeRangePos[] for ease of computation inside GPU */
+	while((j <= msk_ctx -> activeRangePos[k]) && (k < msk_ctx -> count)) { 
+		if(j == msk_ctx -> activeRangePos[k]) {
+			k++;
+			j++;
+			continue;
+		}
+		msk_ctx -> activeRangePos[msk_ctx -> count + i] = j;
+		i++;
+		j++;
+	}
+	while ((i+msk_ctx->count) < 8) {
+		msk_ctx -> activeRangePos[msk_ctx -> count + i] = j;
+		i++;
+		j++;
+	}
+}
+
 void opencl_DES_bs_init_global_variables() {
 
 	B = (DES_bs_vector*) mem_alloc (MULTIPLIER * 64 * sizeof(DES_bs_vector));
@@ -663,6 +694,10 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 				exit(EXIT_FAILURE);
 			}
 			memcpy(&msk_ctx, DB->msk_ctx, sizeof(struct mask_context));
+			check_mask_descrypt(&msk_ctx);
+			for(i = 0; i < 8; i++)
+			    printf("%d ",msk_ctx.activeRangePos[i]);
+			printf("\n");
 			HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], mask_gpu, CL_TRUE, 0, sizeof(struct mask_context), &msk_ctx, 0, NULL, NULL ), "Failed Copy data to gpu");
 			flag = 0;
 		}
@@ -778,6 +813,10 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 				exit(EXIT_FAILURE);
 			}
 			memcpy(&msk_ctx, DB->msk_ctx, sizeof(struct mask_context));
+			check_mask_descrypt(&msk_ctx);
+			for(i = 0; i < 8; i++)
+			    printf("%d ",msk_ctx.activeRangePos[i]);
+			printf("\n");
 			HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], mask_gpu, CL_TRUE, 0, sizeof(struct mask_context), &msk_ctx, 0, NULL, NULL ), "Failed Copy data to gpu");
 			flag = 0;
 		}

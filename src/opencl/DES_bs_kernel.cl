@@ -214,7 +214,6 @@ struct mask_context {
 	kvand_shl_or(va, v6, m, 6); 			\
 	kvand_shl_or(vb, v7, m, 7); 			\
 	kvor(kp[0], va, vb); 				\
-	kp++; 						\
 }
 
 #define FINALIZE_NEXT_KEY_BIT_1 { 			\
@@ -227,8 +226,7 @@ struct mask_context {
 	kvand_shl_or(vb, v5, m, 4); 			\
 	kvand_shl_or(va, v6, m, 5); 			\
 	kvand_shl_or(vb, v7, m, 6); 			\
-	kvor(kp[0], va, vb); 				\
-	kp++; 						\
+	kvor(kp[1], va, vb); 				\
 }
 
 #define FINALIZE_NEXT_KEY_BIT_2 { 			\
@@ -241,8 +239,7 @@ struct mask_context {
 	kvand_shl_or(vb, v5, m, 3); 			\
 	kvand_shl_or(va, v6, m, 4); 			\
 	kvand_shl_or(vb, v7, m, 5); 			\
-	kvor(kp[0], va, vb); 				\
-	kp++; 						\
+	kvor(kp[2], va, vb); 				\
 }
 
 #define FINALIZE_NEXT_KEY_BIT_3 { 			\
@@ -255,8 +252,7 @@ struct mask_context {
 	kvand_shl_or(vb, v5, m, 2); 			\
 	kvand_shl_or(va, v6, m, 3); 			\
 	kvand_shl_or(vb, v7, m, 4); 			\
-	kvor(kp[0], va, vb); 				\
-	kp++; 						\
+	kvor(kp[3], va, vb); 				\
 }
 
 #define FINALIZE_NEXT_KEY_BIT_4 { 			\
@@ -269,8 +265,7 @@ struct mask_context {
 	kvand_shl1_or(vb, v5, m); 			\
 	kvand_shl_or(va, v6, m, 2); 			\
 	kvand_shl_or(vb, v7, m, 3); 			\
-	kvor(kp[0], va, vb); 				\
-	kp++; 						\
+	kvor(kp[4], va, vb); 				\
 }
 
 #define FINALIZE_NEXT_KEY_BIT_5 { 			\
@@ -283,8 +278,7 @@ struct mask_context {
 	kvand_or(vb, v5, m); 				\
 	kvand_shl1_or(va, v6, m); 			\
 	kvand_shl_or(vb, v7, m, 2); 			\
-	kvor(kp[0], va, vb); 				\
-	kp++; 						\
+	kvor(kp[5], va, vb); 				\
 }
 
 #define FINALIZE_NEXT_KEY_BIT_6 { 			\
@@ -297,8 +291,7 @@ struct mask_context {
 	kvand_shr_or(vb, v5, m, 1); 			\
 	kvand_or(va, v6, m); 				\
 	kvand_shl1_or(vb, v7, m); 			\
-	kvor(kp[0], va, vb); 				\
-	kp++; 						\
+	kvor(kp[6], va, vb); 				\
 }
 
 #define FINALIZE_NEXT_KEY_BIT_7 { 			\
@@ -311,8 +304,8 @@ struct mask_context {
 	kvand_shr_or(vb, v5, m, 2); 			\
 	kvand_shr_or(va, v6, m, 1); 			\
 	kvand_or(vb, v7, m); 				\
-	kvor(kp[0], va, vb); 				\
-	kp++;
+	kvor(kp[7], va, vb); 				\
+}	
 	
 void pass_gen(unsigned int section,
 	      __global DES_bs_transfer *DES_bs_all,
@@ -439,55 +432,32 @@ inline void load_v(__private kvtype *v, unsigned int weight, unsigned int j, uns
 	v[0] = (a) | (unsigned int)(b << 8) | (unsigned int)(c << 16) | (unsigned int)(d << 24) ;
 }
 
-inline void DES_bs_finalize_keys(unsigned int section,
+inline void DES_bs_finalize_keys_bench(unsigned int section,
 				__global DES_bs_transfer *DES_bs_all,
 				int local_offset_K,
-				__local DES_bs_vector *K,
-				unsigned int num_loaded_hash,
-				unsigned int offset) {
-
+				__local DES_bs_vector *K) {
 
 	__local DES_bs_vector *kp = (__local DES_bs_vector *)&K[local_offset_K] ;
 
-	unsigned int ic, weight, init, i  ;
+	unsigned int ic ;
 	kvtype v0, v1, v2, v3, v4, v5, v6, v7;
-	init = section * 32 + offset;
-
+	
 	for (ic = 0; ic < 8; ic++) {
 
 		MAYBE_GLOBAL DES_bs_vector *vp;
+		vp = (MAYBE_GLOBAL DES_bs_vector *)&DES_bs_all[section].xkeys.v[ic][0] ;
+		
+		kp = (__local DES_bs_vector *)&K[local_offset_K] + 7 * ic;
 
-		if ( !num_loaded_hash ) {
-			vp = (MAYBE_GLOBAL DES_bs_vector *)&DES_bs_all[section].xkeys.v[ic][0] ;
-
-			v0 = *(MAYBE_GLOBAL kvtype *)&vp[0];
-			v1 = *(MAYBE_GLOBAL kvtype *)&vp[1];
-			v2 = *(MAYBE_GLOBAL kvtype *)&vp[2];
-			v3 = *(MAYBE_GLOBAL kvtype *)&vp[3];
-			v4 = *(MAYBE_GLOBAL kvtype *)&vp[4];
-			v5 = *(MAYBE_GLOBAL kvtype *)&vp[5];
-			v6 = *(MAYBE_GLOBAL kvtype *)&vp[6];
-			v7 = *(MAYBE_GLOBAL kvtype *)&vp[7];
-		}
-
-		else {
-			weight = 1;
-			i = 0;
-			while(i<ic) {
-				weight *= 10;
-				i++;
-			}
-			load_v(&v0, weight, 0, init);
-			load_v(&v1, weight, 1, init);
-			load_v(&v2, weight, 2, init);
-			load_v(&v3, weight, 3, init);
-			load_v(&v4, weight, 4, init);
-			load_v(&v5, weight, 5, init);
-			load_v(&v6, weight, 6, init);
-			load_v(&v7, weight, 7, init);
-
-		}
-
+		v0 = *(MAYBE_GLOBAL kvtype *)&vp[0];
+		v1 = *(MAYBE_GLOBAL kvtype *)&vp[1];
+		v2 = *(MAYBE_GLOBAL kvtype *)&vp[2];
+		v3 = *(MAYBE_GLOBAL kvtype *)&vp[3];
+		v4 = *(MAYBE_GLOBAL kvtype *)&vp[4];
+		v5 = *(MAYBE_GLOBAL kvtype *)&vp[5];
+		v6 = *(MAYBE_GLOBAL kvtype *)&vp[6];
+		v7 = *(MAYBE_GLOBAL kvtype *)&vp[7];
+		
 		FINALIZE_NEXT_KEY_BIT_0
 		FINALIZE_NEXT_KEY_BIT_1
 		FINALIZE_NEXT_KEY_BIT_2
@@ -497,7 +467,87 @@ inline void DES_bs_finalize_keys(unsigned int section,
 		FINALIZE_NEXT_KEY_BIT_6
 
 	}
+}
 
+ void DES_bs_finalize_keys(unsigned int section,
+				int local_offset_K,
+				__local DES_bs_vector *K,
+				unsigned int offset) {
+
+
+	__local DES_bs_vector *kp = (__local DES_bs_vector *)&K[local_offset_K] ;
+
+	unsigned int weight, init, i, ic  ;
+	kvtype v0, v1, v2, v3, v4, v5, v6, v7;
+	init = section * 32 + offset;
+	int activeRangePos[8], activeRangeCount = 3;
+	activeRangePos[0] = 2;
+	activeRangePos[1] = 4;
+	activeRangePos[2] = 5;
+	activeRangePos[3] = 0;
+	activeRangePos[4] = 1;
+	activeRangePos[5] = 3;
+	activeRangePos[6] = 6;
+	activeRangePos[7] = 7;
+		
+	for(ic = 0; ic < activeRangeCount; ic++) {
+		
+		kp = (__local DES_bs_vector *)&K[local_offset_K] + 7 * activeRangePos[ic];
+		
+		weight = 1;
+		i = 0;
+		while(i<activeRangePos[ic]) {
+			weight *= 10;
+			i++;
+		}
+		load_v(&v0, weight, 0, init);
+		load_v(&v1, weight, 1, init);
+		load_v(&v2, weight, 2, init);
+		load_v(&v3, weight, 3, init);
+		load_v(&v4, weight, 4, init);
+		load_v(&v5, weight, 5, init);
+		load_v(&v6, weight, 6, init);
+		load_v(&v7, weight, 7, init);
+
+		FINALIZE_NEXT_KEY_BIT_0
+		FINALIZE_NEXT_KEY_BIT_1
+		FINALIZE_NEXT_KEY_BIT_2
+		FINALIZE_NEXT_KEY_BIT_3
+		FINALIZE_NEXT_KEY_BIT_4
+		FINALIZE_NEXT_KEY_BIT_5
+		FINALIZE_NEXT_KEY_BIT_6
+		
+	}
+	
+	for(ic = activeRangeCount; ic < 8; ic++) {
+		
+		kp = (__local DES_bs_vector *)&K[local_offset_K] + 7 * activeRangePos[ic];
+		
+		weight = 1;
+		i = 0;
+		while(i<activeRangePos[ic]) {
+			weight *= 10;
+			i++;
+		}
+		load_v(&v0, weight, 0, init);
+		load_v(&v1, weight, 1, init);
+		load_v(&v2, weight, 2, init);
+		load_v(&v3, weight, 3, init);
+		load_v(&v4, weight, 4, init);
+		load_v(&v5, weight, 5, init);
+		load_v(&v6, weight, 6, init);
+		load_v(&v7, weight, 7, init);
+
+		FINALIZE_NEXT_KEY_BIT_0
+		FINALIZE_NEXT_KEY_BIT_1
+		FINALIZE_NEXT_KEY_BIT_2
+		FINALIZE_NEXT_KEY_BIT_3
+		FINALIZE_NEXT_KEY_BIT_4
+		FINALIZE_NEXT_KEY_BIT_5
+		FINALIZE_NEXT_KEY_BIT_6
+		
+	}
+		
 }
 
 #if defined(_NV) || defined(_CPU)
@@ -1040,7 +1090,11 @@ __kernel void DES_bs_25(constant uint *index768 __attribute__((max_constant_size
 			for(i = 0; i < num_loaded_hash; i++)
 				output[i] = 0;
 
-		DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K, num_loaded_hash, offset);
+		if(!num_loaded_hash)
+			DES_bs_finalize_keys_bench(section, DES_bs_all, local_offset_K, _local_K);
+		
+		else 
+			DES_bs_finalize_keys(section, local_offset_K, _local_K, offset);
 
 		iterations = 25;
 		des_loop(B, _local_K, iterations, local_offset_K);
@@ -1140,7 +1194,11 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 #endif
 		int iterations;
 
-		DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K, num_loaded_hash, offset);
+		if(!num_loaded_hash)
+			DES_bs_finalize_keys_bench(section, DES_bs_all, local_offset_K, _local_K);
+		
+		else 
+			DES_bs_finalize_keys(section, local_offset_K, _local_K, offset);
 
 		if(!section)
 			for(i = 0; i < num_loaded_hash; i++)
@@ -1278,9 +1336,11 @@ next:
 #ifndef RV7xx
 		__local ushort _local_index768[768] ;
 #endif
+		if(!num_loaded_hash)
+			DES_bs_finalize_keys_bench(section, DES_bs_all, local_offset_K, _local_K);
 		
-
-		DES_bs_finalize_keys(section, DES_bs_all, local_offset_K, _local_K, num_loaded_hash, offset);
+		else 
+			DES_bs_finalize_keys(section, local_offset_K, _local_K, offset);
 
 		for (i = 0; i < 64; i++)
 			B[i] = 0;
