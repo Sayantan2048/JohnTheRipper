@@ -190,8 +190,12 @@ fill2:
 */
 	}
 	
-	else  	memcpy(input_keys + 8 * index, key , 8);
-			
+	else  	{
+			memcpy(input_keys + 8 * index, key , 8);
+	if(index == 10)
+	  printf("out kernel%s\n",key);
+	  
+	}
 }
 
 

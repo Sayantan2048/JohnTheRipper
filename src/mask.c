@@ -75,14 +75,7 @@ void combinationUtil(void *arr, int data[], int start, int end, int index, int r
 
 static void set_mask(struct rpp_context *rpp_ctx, struct db_main *db) {
 		
-	int i, j, keys_limit, isOptimal = 0x7fffffff;
-	int storei[0x100], ctr, flag;
-	int comparison_fn_cc (const void *a, const void *b) { 
-		return ((struct mask_range*)b) -> count - ((struct mask_range*)a) -> count; 
-	}
-	int comparison_fn_pos (const void *a, const void *b) { 
-		return ((struct mask_range*)a) -> pos - ((struct mask_range*)b) -> pos; 
-	}
+	int i, j;
 	
 	for(i = 0; i < rpp_ctx->count; i++ ) {
 		memcpy(msk_ctx.ranges[i].chars, rpp_ctx->ranges[i].chars, 0x100);
