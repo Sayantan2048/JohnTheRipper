@@ -314,10 +314,15 @@ void pass_gen(__global DES_bs_transfer *DES_bs_all,
 	      uint activeRangeCount,
 	      __local uchar *range,
 	      __private uint *rangeNumChars,
-	      __private uint *rangeOffset,
+	      uint offset,
 	      unsigned int opLoc) {
 	    
-	    int i[4], ic, ctr = 0,flag = 0x7fffffff;
+	int i[4], ic, ctr = 0,flag = 0x7fffffff, rangeOffset[4];
+	    
+	rangeOffset[0] = offset % rangeNumChars[0] ;
+	rangeOffset[1] = (offset / rangeNumChars[0]) % rangeNumChars[1];
+	rangeOffset[2] = (offset / (rangeNumChars[0] * rangeNumChars[1])) % rangeNumChars[2];
+	rangeOffset[3] = (offset / (rangeNumChars[0] * rangeNumChars[1] * rangeNumChars[2])) % rangeNumChars[3];
 	    
 	    for (i[3] = rangeOffset[3]&flag; i[3] < rangeNumChars[3]; i[3]++)
 	      for (i[2] = rangeOffset[2]&flag; i[2] < rangeNumChars[2]; i[2]++)
@@ -351,7 +356,7 @@ inline void cmp( __private vtype *B,
 	  uint activeRangeCount,
 	  __local uchar *range,
 	  __private uint *rangeNumChars,
-	  __private uint *rangeOffset) {
+	  uint offset) {
 
 
 	int value[2] , mask, i, bit;
@@ -372,7 +377,7 @@ inline void cmp( __private vtype *B,
 
 			if (mask == ~(int)0) goto next_hash;
 		}
-		//printf("In Kernel found %d\n",offset);		
+		
 		mask = 64 * i;
 		for (bit = 0; bit < 64; bit++)
 				B_global[mask + bit] = (DES_bs_vector)B[bit] ;
@@ -383,7 +388,7 @@ inline void cmp( __private vtype *B,
 			  activeRangeCount,
 			  range,
 			  rangeNumChars,
-			  rangeOffset,
+			  offset,
 			  i);
 		
 		atomic_max( &output[i], i + 1) ;
@@ -393,23 +398,6 @@ inline void cmp( __private vtype *B,
 
 }
 #undef GET_BIT
-
-
-inline void load_v(__private kvtype *v, unsigned int weight, unsigned int j, unsigned int init ) {
-	unsigned int a, b, c, d;
-
-	a = (j + init) /  weight ;
-	b = (j + 8 + init) / weight ;
-	c = (j + 16 + init) / weight ;
-	d = (j + 24 + init) / weight ;
-
-	a = a ? (a % 10) + 48 : 0;
-	b = b ? (b % 10) + 48 : 0;
-	c = c ? (c % 10) + 48 : 0;
-	d = d ? (d % 10) + 48 : 0;
-
-	v[0] = (a) | (unsigned int)(b << 8) | (unsigned int)(c << 16) | (unsigned int)(d << 24) ;
-}
 
 inline void DES_bs_finalize_keys_bench(unsigned int section,
 				__global DES_bs_transfer *DES_bs_all,
@@ -464,31 +452,21 @@ inline void load_v_active(__private kvtype *v, unsigned int weight, unsigned int
 	v[0] = (a) | (unsigned int)(b << 8) | (unsigned int)(c << 16) | (unsigned int)(d << 24) ;
 }
 
-inline void load_v_passive(__private kvtype *v, __private uchar *key, int idx) {
-	unsigned int a;
-	a =  key[idx];
-	v[0] = (a) | (unsigned int)(a << 8) | (unsigned int)(a << 16) | (unsigned int)(a << 24) ;
-}
-
- void DES_bs_finalize_keys(unsigned int section,
-			   int local_offset_K,
+void DES_bs_finalize_keys(int local_offset_K,
 			   __local DES_bs_vector *K,
 			   unsigned int offset,
 			   __private uint *activeRangePos,
 			   uint activeRangeCount,
 			   __local unsigned char* range,
 			   __private uint *rangeNumChars,
-			   __private uchar *input_key,
-			   __private uint *rangeOffset
-			   ) {
+			   __private uchar *input_key) {
 
 
 	__local DES_bs_vector *kp = (__local DES_bs_vector *)&K[local_offset_K] ;
 
-	unsigned int weight, init, i, ic  ;
+	unsigned int weight, i, ic  ;
 	kvtype v0, v1, v2, v3, v4, v5, v6, v7;
-	init = section * 32 + offset;
-	
+		
 	for(ic = 0; ic < activeRangeCount; ic++) {
 		
 		kp = (__local DES_bs_vector *)&K[local_offset_K] + 7 * activeRangePos[ic];
@@ -525,16 +503,8 @@ inline void load_v_passive(__private kvtype *v, __private uchar *key, int idx) {
 		
 		v0 = input_key[activeRangePos[ic]];
 		v0 =  (v0) | (unsigned int)(v0 << 8) | (unsigned int)(v0 << 16) | (unsigned int)(v0 << 24) ; 
-		
-		//load_v_passive(&v0, input_key, activeRangePos[ic]);
-		//load_v_passive(&v1, input_key, activeRangePos[ic]);
-		//load_v_passive(&v2, input_key, activeRangePos[ic]);
-		//load_v_passive(&v3, input_key, activeRangePos[ic]);
-		//load_v_passive(&v4, input_key, activeRangePos[ic]);
-		//load_v_passive(&v5, input_key, activeRangePos[ic]);
-		//load_v_passive(&v6, input_key, activeRangePos[ic]);
-		//load_v_passive(&v7, input_key, activeRangePos[ic]);
 		v1 = v2 = v3 = v4 = v5 = v6 = v7 = v0;
+		
 		FINALIZE_NEXT_KEY_BIT_0
 		FINALIZE_NEXT_KEY_BIT_1
 		FINALIZE_NEXT_KEY_BIT_2
@@ -1074,7 +1044,7 @@ __kernel void DES_bs_25(constant uint *index768 __attribute__((max_constant_size
 			  uint offset) {
 
 		unsigned int section = get_global_id(0), global_offset_B ,local_offset_K, loop_count;
-		unsigned int local_id = get_local_id(0), i, iterations, activeRangePos[8], activeRangeCount, rangeNumChars[4], rangeOffset[4];
+		unsigned int local_id = get_local_id(0), i, iterations, activeRangePos[8], activeRangeCount, rangeNumChars[4];
 		unsigned char input_key[8];
 		global_offset_B = 64 * section;
 		local_offset_K  = 56 * local_id;
@@ -1128,33 +1098,26 @@ __kernel void DES_bs_25(constant uint *index768 __attribute__((max_constant_size
 
 		barrier(CLK_LOCAL_MEM_FENCE);
 #endif		
-		rangeOffset[0] = rangeOffset[1] = rangeOffset[2] = rangeOffset[3] = 0;
+		if(!num_loaded_hash)
+				DES_bs_finalize_keys_bench(section, DES_bs_all, local_offset_K, _local_K);
 		offset =0;
 		i = 1;
-do {
-		if(!num_loaded_hash)
-			DES_bs_finalize_keys_bench(section, DES_bs_all, local_offset_K, _local_K);
-		
-		else 
-			DES_bs_finalize_keys(section, local_offset_K, _local_K, offset, activeRangePos, activeRangeCount, range, rangeNumChars, input_key, rangeOffset);
+		do {
+			if(num_loaded_hash)
+				DES_bs_finalize_keys(local_offset_K, _local_K, offset, activeRangePos, activeRangeCount, range, rangeNumChars, input_key);
 
-		iterations = 25;
-		des_loop(B, _local_K, iterations, local_offset_K);
+			iterations = 25;
+			des_loop(B, _local_K, iterations, local_offset_K);
 		
-		cmp( B, binary, num_loaded_hash, output, B_global, DES_bs_all, input_key, activeRangePos, activeRangeCount, range, rangeNumChars, rangeOffset) ;
+			cmp(B, binary, num_loaded_hash, output, B_global, DES_bs_all, input_key, activeRangePos, activeRangeCount, range, rangeNumChars, offset) ;
 
-		offset = i*32;
-		rangeOffset[0] = offset % rangeNumChars[0] ;
-		rangeOffset[1] = (offset / rangeNumChars[0]) % rangeNumChars[1];
-		rangeOffset[2] = (offset / (rangeNumChars[0] * rangeNumChars[1])) % rangeNumChars[2];
-		rangeOffset[3] = (offset / (rangeNumChars[0] * rangeNumChars[1] * rangeNumChars[2])) % rangeNumChars[3];
-		i++;
+			offset = i*32;
+			i++;
 		} while (i <= loop_count);
 	
-
 		if((!num_loaded_hash)) {
 			for (i = 0; i < 64; i++)
-				B_global[global_offset_B + i] = (DES_bs_vector)B[i] ;			
+				B_global[global_offset_B + i] = (DES_bs_vector)B[i]; 			
 		}
 
 }
@@ -1232,7 +1195,7 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 			  uint offset) {
 
 		unsigned int section = get_global_id(0), global_offset_B, local_offset_K, loop_count;
-		unsigned int local_id = get_local_id(0), activeRangePos[8], activeRangeCount, rangeNumChars[4], rangeOffset[4];
+		unsigned int local_id = get_local_id(0), activeRangePos[8], activeRangeCount, rangeNumChars[4];
 		unsigned char input_key[8];
 		global_offset_B = 64 * section;
 		local_offset_K  = 56 * local_id;
@@ -1289,27 +1252,22 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 
 		barrier(CLK_LOCAL_MEM_FENCE);
 #endif		
-		rangeOffset[0] = rangeOffset[1] = rangeOffset[2] = rangeOffset[3] = 0;
+		if(!num_loaded_hash)
+				DES_bs_finalize_keys_bench(section, DES_bs_all, local_offset_K, _local_K);
+				
 		offset =0;
 		i = 1;
-		do {
-		if(!num_loaded_hash)
-			DES_bs_finalize_keys_bench(section, DES_bs_all, local_offset_K, _local_K);
-		
-		else 
-			DES_bs_finalize_keys(section, local_offset_K, _local_K, offset, activeRangePos, activeRangeCount, range, rangeNumChars, input_key, rangeOffset);
+		do {    
+			if(num_loaded_hash)
+				DES_bs_finalize_keys(local_offset_K, _local_K, offset, activeRangePos, activeRangeCount, range, rangeNumChars, input_key);
 
-		iterations = 25;
-		des_loop(B, _local_K, _local_index768, index768, iterations, local_offset_K);
+			iterations = 25;
+			des_loop(B, _local_K, _local_index768, index768, iterations, local_offset_K);
 
-		cmp( B, binary, num_loaded_hash, output, B_global, DES_bs_all, input_key, activeRangePos, activeRangeCount, range, rangeNumChars, rangeOffset) ;
+			cmp(B, binary, num_loaded_hash, output, B_global, DES_bs_all, input_key, activeRangePos, activeRangeCount, range, rangeNumChars, offset) ;
 		
-		offset = i*32;
-		rangeOffset[0] = offset % rangeNumChars[0] ;
-		rangeOffset[1] = (offset / rangeNumChars[0]) % rangeNumChars[1];
-		rangeOffset[2] = (offset / (rangeNumChars[0] * rangeNumChars[1])) % rangeNumChars[2];
-		rangeOffset[3] = (offset / (rangeNumChars[0] * rangeNumChars[1] * rangeNumChars[2])) % rangeNumChars[3];
-		i++;
+			offset = i*32;
+			i++;
 		} while (i <= loop_count);
 	
 		if((!num_loaded_hash)) {
@@ -1404,7 +1362,7 @@ next:
 			uint offset)  {
 
 		unsigned int section = get_global_id(0), global_offset_B ,local_offset_K;
-		unsigned int local_id = get_local_id(0), activeRangePos[8], activeRangeCount, rangeNumChars[4], rangeOffset[4];
+		unsigned int local_id = get_local_id(0), activeRangePos[8], activeRangeCount, rangeNumChars[4];
 		int iterations, i, loop_count;
 		unsigned char input_key[8];
 		global_offset_B = 64 * section;
@@ -1459,27 +1417,24 @@ next:
 
 		barrier(CLK_LOCAL_MEM_FENCE);
 #endif
-		rangeOffset[0] = rangeOffset[1] = rangeOffset[2] = rangeOffset[3] = 0;
+		if(!num_loaded_hash)
+				DES_bs_finalize_keys_bench(section, DES_bs_all, local_offset_K, _local_K);
+				
 		offset =0;
 		i = 1;
-		do {
-		if(!num_loaded_hash)
-			DES_bs_finalize_keys_bench(section, DES_bs_all, local_offset_K, _local_K);
 		
-		else 
-			DES_bs_finalize_keys(section, local_offset_K, _local_K, offset, activeRangePos, activeRangeCount, range, rangeNumChars, input_key, rangeOffset);
+		do {	
+			if(num_loaded_hash)
+				DES_bs_finalize_keys(local_offset_K, _local_K, offset, activeRangePos, activeRangeCount, range, rangeNumChars, input_key);
 
-		iterations = 25;
-		des_loop(B, _local_K, _local_index768, index768, index96, iterations, local_offset_K);
+			iterations = 25;
+			des_loop(B, _local_K, _local_index768, index768, index96, iterations, local_offset_K);
 		
-		cmp( B, binary, num_loaded_hash, output, B_global, DES_bs_all, input_key, activeRangePos, activeRangeCount, range, rangeNumChars, rangeOffset) ;
+			cmp( B, binary, num_loaded_hash, output, B_global, DES_bs_all, input_key, activeRangePos, activeRangeCount, range, rangeNumChars, offset) ;
 		
-		offset = i*32;
-		rangeOffset[0] = offset % rangeNumChars[0] ;
-		rangeOffset[1] = (offset / rangeNumChars[0]) % rangeNumChars[1];
-		rangeOffset[2] = (offset / (rangeNumChars[0] * rangeNumChars[1])) % rangeNumChars[2];
-		rangeOffset[3] = (offset / (rangeNumChars[0] * rangeNumChars[1] * rangeNumChars[2])) % rangeNumChars[3];
-		i++;
+			offset = i*32;
+			i++;
+		
 		} while (i <= loop_count);		
 		
 		if((!num_loaded_hash)) {
