@@ -729,7 +729,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 
 	if (salt) {
 		int i;
-		max = 0;
+		max = ~(unsigned int)0;
 		min = MULTIPLIER ;
 
 		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], cmp_out_gpu, CL_TRUE, 0, (salt -> count) * sizeof(unsigned int), cmp_out, 0, NULL, NULL),"Write FAILED\n");
@@ -740,7 +740,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 				continue ;
 			}
 			cmp_out[i]--;
-			if (cmp_out[i] > max)
+			if ((int)cmp_out[i] > (int)max)
 				max = cmp_out[i];
 
 			if(cmp_out[i] < min)
@@ -748,12 +748,12 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 
 		}
 
-		if (max>=0) {
+		if ((int)max>=0) {
 			HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], B_gpu,CL_TRUE, 0, MULTIPLIER * 64 * sizeof(DES_bs_vector), B, 0, NULL, NULL),"Write FAILED\n");
 			HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], opencl_DES_bs_data_gpu, CL_TRUE, 0, MULTIPLIER * sizeof(opencl_DES_bs_transfer), opencl_DES_bs_data, 0, NULL, NULL ), "Failed Copy data from gpu");
 			clFinish(queue[ocl_gpu_id]);
-			printf("crypt all %d\n",max + 1);
-			return (max + 1)* DES_BS_DEPTH;
+			printf("crypt all %d\n",max );
+			return (max+1)* DES_BS_DEPTH;
 		}
 
 		else return 0;
@@ -851,7 +851,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 
 	if (salt) {
 		int i;
-		max = 0;
+		max = ~(unsigned int)0;
 		min = MULTIPLIER ;
 
 		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], cmp_out_gpu, CL_TRUE, 0, (salt->count) * sizeof(unsigned int), cmp_out, 0, NULL, NULL), "Write FAILED\n");
@@ -862,7 +862,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 				continue ;
 			}
 			cmp_out[i]--;
-			if (cmp_out[i] > max)
+			if ((int)cmp_out[i] > (int)max)
 				max = cmp_out[i];
 
 			if(cmp_out[i] < min)
@@ -870,8 +870,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 
 		}
 
-
-		if(max>=0) {
+		if ((int)max>=0) {
 			HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], B_gpu, CL_TRUE, 0, MULTIPLIER * 64 * sizeof(DES_bs_vector), B, 0, NULL, NULL), "Write FAILED\n");
 			HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], opencl_DES_bs_data_gpu, CL_TRUE, 0, MULTIPLIER * sizeof(opencl_DES_bs_transfer), opencl_DES_bs_data, 0, NULL, NULL ), "Failed Copy data from gpu");
 			clFinish(queue[ocl_gpu_id]);
