@@ -39,7 +39,8 @@ void calcCombination(void *arr, int n, int target)
     int data[n], isOptimal = 0x7fffffff, i;
     ((struct mask_context*)arr) -> count = 0x7fffffff;
     
-    for(i = 1; i<= n ;i++) 
+    /* Fix the maximum number of ranges that can be calculated on GPU to 3 */
+    for(i = 1; i<= 3 ;i++) 
 		combinationUtil(arr, data, 0, n-1, 0, i, target, &isOptimal);
     
 }

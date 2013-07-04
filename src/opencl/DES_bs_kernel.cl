@@ -63,7 +63,7 @@
 #define DES_bs_vector                   ARCH_WORD
 
 #define RULE_RANGES_MAX                 16
-#define MAX_CHARS			32	
+#define MAX_CHARS			64	
 
 typedef unsigned ARCH_WORD vtype ;
 
@@ -317,14 +317,12 @@ void pass_gen(__global DES_bs_transfer *DES_bs_all,
 	      uint offset,
 	      unsigned int opLoc) {
 	    
-	int i[4], ic, ctr = 0,flag = 0x7fffffff, rangeOffset[4];
+	int i[4], ic, ctr = 0,flag = 0x7fffffff, rangeOffset[3];
 	    
 	rangeOffset[0] = offset % rangeNumChars[0] ;
 	rangeOffset[1] = (offset / rangeNumChars[0]) % rangeNumChars[1];
 	rangeOffset[2] = (offset / (rangeNumChars[0] * rangeNumChars[1])) % rangeNumChars[2];
-	rangeOffset[3] = (offset / (rangeNumChars[0] * rangeNumChars[1] * rangeNumChars[2])) % rangeNumChars[3];
-	    
-	    for (i[3] = rangeOffset[3]&flag; i[3] < rangeNumChars[3]; i[3]++)
+		    
 	      for (i[2] = rangeOffset[2]&flag; i[2] < rangeNumChars[2]; i[2]++)
 		for (i[1] = rangeOffset[1]&flag; i[1] < rangeNumChars[1]; i[1]++)
 		  for (i[0] = rangeOffset[0]&flag; i[0] < rangeNumChars[0]; i[0]++) {
@@ -1095,7 +1093,7 @@ __kernel void DES_bs_25(constant uint *index768 __attribute__((max_constant_size
 
 		unsigned int section = get_global_id(0), local_offset_K, loop_count;
 		unsigned int local_id = get_local_id(0), i, iterations, activeRangeCount ;
-		unsigned char input_key[8], activeRangePos[8], rangeNumChars[4];
+		unsigned char input_key[8], activeRangePos[8], rangeNumChars[3];
 		
 		local_offset_K  = 56 * local_id;
 
@@ -1103,7 +1101,7 @@ __kernel void DES_bs_25(constant uint *index768 __attribute__((max_constant_size
 		
 		__local DES_bs_vector _local_K[56 * WORK_GROUP_SIZE] ;
 		
-		__local unsigned char range[4*MAX_CHARS];
+		__local unsigned char range[3*MAX_CHARS];
 
 		if(!section)
 			for(i = 0; i < num_loaded_hash; i++)
@@ -1117,7 +1115,7 @@ __kernel void DES_bs_25(constant uint *index768 __attribute__((max_constant_size
 		for (i = 0; i < 8; i++ )
 			input_key[i] = input_keys[8*section + i];
 		
-		for (i = 0; i < 4; i++) 
+		for (i = 0; i < 3; i++) 
 			rangeNumChars[i] = msk_ctx[0].ranges[activeRangePos[i]].count;
 			
 		loop_count = 1;
@@ -1132,7 +1130,6 @@ __kernel void DES_bs_25(constant uint *index768 __attribute__((max_constant_size
 				range[i] = msk_ctx[0].ranges[activeRangePos[0]].chars[i];
 				range[i + MAX_CHARS] = msk_ctx[0].ranges[activeRangePos[1]].chars[i];
 				range[i + 2*MAX_CHARS] = msk_ctx[0].ranges[activeRangePos[2]].chars[i];
-				range[i + 3*MAX_CHARS] = msk_ctx[0].ranges[activeRangePos[3]].chars[i];	
 			}	
 		}		
 		barrier(CLK_LOCAL_MEM_FENCE);	
@@ -1264,7 +1261,7 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 
 		unsigned int section = get_global_id(0), local_offset_K, loop_count;
 		unsigned int local_id = get_local_id(0),  activeRangeCount;
-		unsigned char input_key[8], activeRangePos[8], rangeNumChars[4];
+		unsigned char input_key[8], activeRangePos[8], rangeNumChars[3];
 		
 		local_offset_K  = 56 * local_id;
 
@@ -1272,7 +1269,7 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 		
 		__local DES_bs_vector _local_K[56*WORK_GROUP_SIZE] ;
 		__local ushort _local_index768[768] ;
-		__local unsigned char range[4*MAX_CHARS];
+		__local unsigned char range[3*MAX_CHARS];
 
 		int iterations;
 		
@@ -1288,7 +1285,7 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 		for (i = 0; i < 8; i++ )
 			input_key[i] = input_keys[8*section + i];
 		
-		for (i = 0; i < 4; i++) 
+		for (i = 0; i < 3; i++) 
 			rangeNumChars[i] = msk_ctx[0].ranges[activeRangePos[i]].count;
 			
 		loop_count = 1;
@@ -1414,7 +1411,7 @@ next:
 		unsigned int section = get_global_id(0), global_offset_B ,local_offset_K;
 		unsigned int local_id = get_local_id(0), activeRangeCount ;
 		int iterations, i, loop_count;
-		unsigned char input_key[8], activeRangePos[8], rangeNumChars[4];
+		unsigned char input_key[8], activeRangePos[8], rangeNumChars[3];
 		global_offset_B = 64 * section;
 		local_offset_K  = 56 * local_id;
 
@@ -1423,7 +1420,7 @@ next:
 		__local DES_bs_vector _local_K[56 * WORK_GROUP_SIZE] ;
 #ifndef RV7xx
 		__local ushort _local_index768[768] ;
-		__local unsigned char range[4*MAX_CHARS];
+		__local unsigned char range[3*MAX_CHARS];
 #endif
 		for (i = 0; i < 8 ;i++)
 			activeRangePos[i] = msk_ctx[0].activeRangePos[i];
@@ -1433,7 +1430,7 @@ next:
 		for (i = 0; i < 8; i++ )
 			input_key[i] = input_keys[8*section + i];
 			
-		for (i = 0; i < 4; i++) 
+		for (i = 0; i < 3; i++) 
 			rangeNumChars[i] = msk_ctx[0].ranges[activeRangePos[i]].count;
 		
 		loop_count = 1;

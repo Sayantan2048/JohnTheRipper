@@ -32,6 +32,7 @@ static unsigned int *cmp_out, num_loaded_hash, min, max ;
 static int benchmark = 1;
 static unsigned int offset = 0;
 static unsigned char *input_keys;
+static WORD stored_salt[4096]= {0x7fffffff};
 static struct mask_context msk_ctx;
 static struct db_main *DB;
 
@@ -61,6 +62,8 @@ void opencl_DES_reset(struct db_main *db) {
 
 
 	if(db) {
+	int i;
+	
 	MEM_FREE(loaded_hash);
 	MEM_FREE(cmp_out);
 
@@ -81,13 +84,16 @@ void opencl_DES_reset(struct db_main *db) {
 	benchmark = 0;
 	
 	/* Expected number of keys to be generated on GPU per work item. Actual number will vary depending on the mask but it should be close */ 
-	db -> max_int_keys = 676;
+	db -> max_int_keys = 4096;
 	
 	/* Each work item receives one key, so set the following parameters to tuned GWS for format */
 	db -> format -> params.max_keys_per_crypt = MULTIPLIER;
 	db -> format -> params.min_keys_per_crypt = MULTIPLIER;
 	
 	DB = db;
+	
+	for (i = 0; i < 4096; i++)
+		stored_salt[i] = 0x7fffffff;
 
 	}
 }
@@ -299,8 +305,6 @@ static void find_best_gws(struct fmt_main *fmt)
 }
 
 #if HARDCODE_SALT
-
-	static WORD stored_salt[4096]= {0x7fffffff};
 
 	//static char *kernel_source;
 
