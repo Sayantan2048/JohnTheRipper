@@ -57,12 +57,12 @@
 
 #include "opencl_DES_WGS.h"
 #include "opencl_device_info.h"
+#include "opencl_shared_mask.h"
 
 #define ARCH_WORD     			int
 #define DES_BS_DEPTH                    32
 #define DES_bs_vector                   ARCH_WORD
 
-#define RULE_RANGES_MAX                 16
 #define MAX_CHARS			64	
 
 typedef unsigned ARCH_WORD vtype ;
@@ -94,29 +94,6 @@ typedef struct{
 
 	int keys_changed ;
 } DES_bs_transfer ;
-
-struct mask_range {
-  /* Charchters in the range */
-	char chars[0x100];
-	
-  /* Number of charchters in the range */	
-	int count;
-
-  /* Postion of the charcters in mask */
-	int pos;
-};
-
-  /* Simplified mask structure for processing the mask inside a format for password generation */ 
-struct mask_context {
-  /* Set of mask pacholders selected for processing inside the format */
-	struct mask_range ranges[RULE_RANGES_MAX];
-
-  /* Positions in mask for overwriting in the format */ 	  
-	int activeRangePos[RULE_RANGES_MAX];
-	
-  /* Number of postions for overwriting in the format */
-	int count;
-};
 
 #define vxorf(a, b) 					\
 	((a) ^ (b))

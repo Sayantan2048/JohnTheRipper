@@ -126,9 +126,14 @@ void do_mask_crack(struct db_main *db, char *mask)
 #endif
 	rpp_process_rule(&rpp_ctx);
 	
+	if (rpp_ctx.count > MASK_RANGES_MAX) {
+		fprintf(stderr, "mask mode error: Increase MASK_RANGES_MAX value to RULE_RANGES_MAX.\n");
+		error();
+	}
+	
 	db->msk_ctx = (struct mask_context*) mem_alloc(sizeof(struct mask_context));
 	
-	if(db -> max_int_keys)
+	if (db -> max_int_keys)
 		set_mask(&rpp_ctx, db);
 	
 	while ((word = msk_next(&rpp_ctx, &msk_ctx))) {

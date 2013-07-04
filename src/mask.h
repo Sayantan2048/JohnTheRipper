@@ -21,36 +21,12 @@
 
 #ifndef _JOHN_MASK_H
 #define _JOHN_MASK_H
-
+#include "opencl_shared_mask.h"
 /*
  * Some format methods accept pointers to these, yet we can't just include
  * loader.h here because that would be a circular dependency.
  */
 struct db_main;
-
-  /* Range of charcters for a placeholder in the mask */
-struct mask_range {
-  /* Charchters in the range */
-	char chars[0x100];
-	
-  /* Number of charchters in the range */	
-	int count;
-
-  /* Postion of the charcters in mask */
-	int pos;
-};
-
-  /* Simplified mask structure for processing the mask inside a format for password generation */ 
-struct mask_context {
-  /* Set of mask pacholders selected for processing inside the format */
-	struct mask_range ranges[RULE_RANGES_MAX];
-
-  /* Positions in mask for overwriting in the format */ 	  
-	int activeRangePos[RULE_RANGES_MAX];
-	
-  /* Number of postions for overwriting in the format */
-	int count;
-};
 
 /*
  * Runs the mask mode cracker.
