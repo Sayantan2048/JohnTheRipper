@@ -81,7 +81,7 @@ void opencl_DES_reset(struct db_main *db) {
 	benchmark = 0;
 	
 	/* Expected number of keys to be generated on GPU per work item. Actual number will vary depending on the mask but it should be close */ 
-	db -> max_int_keys = 512;
+	db -> max_int_keys = 676;
 	
 	/* Each work item receives one key, so set the following parameters to tuned GWS for format */
 	db -> format -> params.max_keys_per_crypt = MULTIPLIER;
@@ -655,7 +655,10 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 			modify_src();
 			clReleaseProgram(program[ocl_gpu_id]);
 			//build_kernel( ocl_gpu_id, "-fno-bin-amdil -fno-bin-source -fbin-exe") ;
-			opencl_build(ocl_gpu_id, "-fno-bin-amdil -fno-bin-source -fbin-exe", 0, NULL, 1);
+			opencl_build(ocl_gpu_id, "-cl-opt-disable -fno-bin-amdil -fno-bin-source -fbin-exe", 0, NULL, 1);\
+			if(benchmark)
+			krnl[ocl_gpu_id][pos] = clCreateKernel(program[ocl_gpu_id], "DES_bs_25_bench", &err) ;
+			else
 			krnl[ocl_gpu_id][pos] = clCreateKernel(program[ocl_gpu_id], "DES_bs_25", &err) ;
 			if (err) {
 				fprintf(stderr, "Create Kernel DES_bs_25 FAILED\n");
