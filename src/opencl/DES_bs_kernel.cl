@@ -1279,7 +1279,6 @@ __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_siz
 				range[i] = msk_ctx[0].ranges[activeRangePos[0]].chars[i];
 				range[i + MAX_CHARS] = msk_ctx[0].ranges[activeRangePos[1]].chars[i];
 				range[i + 2*MAX_CHARS] = msk_ctx[0].ranges[activeRangePos[2]].chars[i];
-				range[i + 3*MAX_CHARS] = msk_ctx[0].ranges[activeRangePos[3]].chars[i];	
 			}	
 		}		
 
@@ -1435,8 +1434,6 @@ next:
 			for (i = 0; i < MAX_CHARS; i++)
 				range[i + 2*MAX_CHARS] = msk_ctx[0].ranges[activeRangePos[2]].chars[i];
 				
-			for (i = 0; i < MAX_CHARS; i++)
-				range[i + 3*MAX_CHARS] = msk_ctx[0].ranges[activeRangePos[3]].chars[i];	
 		}
 
 		barrier(CLK_LOCAL_MEM_FENCE);
