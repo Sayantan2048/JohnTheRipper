@@ -34,13 +34,55 @@ static struct mask_context msk_ctx;
   /* calculates nCr combinations */ 
 void combinationUtil(void *arr, int data[], int start, int end, int index, int r, int target, int *isOptimal);
 
+int checkRange(struct mask_context *ctx, int rangePos) {
+	char start = ctx -> ranges[rangePos].chars[0];
+	int i;
+	
+	/* Check if all values are consecutive in the given range */
+	for (i = 1; i < (ctx -> ranges[rangePos].count); i++) {
+		if (((ctx -> ranges[rangePos].chars[i]) - start) == i ) continue;
+		break;
+	}
+	
+	if (i == (ctx -> ranges[rangePos].count)) { 
+		ctx -> ranges[rangePos].start =  start;
+		
+		return 1;
+	}
+	
+	for (i = 1; i < (ctx -> ranges[rangePos].count); i++) {
+		if ((start - (ctx -> ranges[rangePos].chars[i])) == i ) continue;
+		break;
+	}
+	
+	if (i == (ctx -> ranges[rangePos].count)) { 
+		ctx -> ranges[rangePos].start =  ctx -> ranges[rangePos].chars[--i];
+		return 1;
+	}
+	
+	/* If all chars are not consecutive */  
+	if ((ctx -> ranges[rangePos].count) <= MAX_GPU_CHARS) {
+		ctx -> ranges[rangePos].start = 0;
+		return 1;
+	}
+	
+	return 0;
+}
+
+int checkSelectRanges(struct mask_context *ctx, int *data, int r) {
+	int i, flag = 1;
+	for (i = 0; i < r; i++)
+	    flag &= checkRange(ctx, data[i]);
+	return flag;
+}
+
 void calcCombination(void *arr, int n, int target)
 {
     int data[n], isOptimal = 0x7fffffff, i;
     ((struct mask_context*)arr) -> count = 0x7fffffff;
     
     /* Fix the maximum number of ranges that can be calculated on GPU to 3 */
-    for(i = 1; i<= 3 ;i++) 
+    for(i = 1; i<= MAX_GPU_RANGES; i++) 
 		combinationUtil(arr, data, 0, n-1, 0, i, target, &isOptimal);
     
 }
@@ -58,6 +100,7 @@ void combinationUtil(void *arr, int data[], int start, int end, int index, int r
 	
 	if(tmp <= *isOptimal ) {
 		if((r < ((struct mask_context*)arr) -> count) || (tmp < *isOptimal)) {
+			if(!checkSelectRanges(((struct mask_context*)arr), data, r)) return;
 			((struct mask_context*)arr) -> count = r;
 			for ( j=0; j<r; j++)
 				((struct mask_context*)arr) -> activeRangePos[j] = data[j];
@@ -91,11 +134,15 @@ static void set_mask(struct rpp_context *rpp_ctx, struct db_main *db) {
 	/*
 	for(i = 0; i < msk_ctx.count; i++)
 	  printf(" %d ", msk_ctx.activeRangePos[i]);*/
-	for(i = 0; i < msk_ctx.count; i++)
+	for(i = 0; i < msk_ctx.count; i++){
 			for(j = 0; j < msk_ctx.ranges[msk_ctx.activeRangePos[i]].count; j++)
-		printf("%c ",msk_ctx.ranges[msk_ctx.activeRangePos[i]].chars[j]);
+				printf("%c ",msk_ctx.ranges[msk_ctx.activeRangePos[i]].chars[j]);
+			printf("\n");
+			//checkRange(&msk_ctx, msk_ctx.activeRangePos[i]) ;
+			printf("START:%c",msk_ctx.ranges[msk_ctx.activeRangePos[i]].start);
+			printf("\n");
+	}
 	
-	printf("\n");
   
 }
 
