@@ -29,6 +29,8 @@
 #define MIN_KEYS_PER_CRYPT		MULTIPLIER
 #define MAX_KEYS_PER_CRYPT		MULTIPLIER
 
+#define PLAINTEXT_LENGTH		8
+
 #define GWS_CONFIG		        "des_GWS"
 
 unsigned int CC_CACHE_ALIGN index768[0x300];
@@ -94,6 +96,7 @@ extern void opencl_DES_bs_set_salt(WORD salt);
  * Set a key for DES_bs_crypt() or DES_bs_crypt_LM(), respectively.
  */
 extern void opencl_DES_bs_set_key(char *key, int index);
+extern char* opencl_DES_bs_get_key(int index);
 extern void opencl_DES_bs_set_key_LM(char *key, int index);
 
 /*
