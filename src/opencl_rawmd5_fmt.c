@@ -19,6 +19,7 @@
 #include "common-opencl.h"
 #include "config.h"
 #include "options.h"
+#include "loader.h"
 
 #define PLAINTEXT_LENGTH    55 /* Max. is 55 with current kernel, Warning: key length is hardcoded in md5_kernel struct return_key */
 #define BUFSIZE             ((PLAINTEXT_LENGTH+3)/4*4)
@@ -43,7 +44,7 @@ struct return_key {
 };
 
 cl_mem pinned_saved_keys, pinned_saved_idx, pinned_partial_hashes;
-cl_mem buffer_keys, buffer_idx, buffer_out, buffer_ld_hashes, buffer_cmp_out, buffer_return_keys;
+cl_mem buffer_keys, buffer_idx, buffer_out, buffer_ld_hashes, buffer_cmp_out, buffer_return_keys, buffer_mask_gpu;
 cl_kernel crk_kernel;
 static cl_uint *partial_hashes;
 static cl_uint *res_hashes ;
@@ -52,12 +53,14 @@ static int benchmark = 1; // used as a flag
 static unsigned int key_idx = 0;
 static int loaded_count;
 static struct return_key *return_keys;
+static struct mask_context msk_ctx;
+static struct db_main *DB;
 
 #define MIN(a, b)               (((a) > (b)) ? (b) : (a))
 #define MAX(a, b)               (((a) > (b)) ? (a) : (b))
 
 #define MIN_KEYS_PER_CRYPT      1024
-#define MAX_KEYS_PER_CRYPT      (1024 * 2048)
+#define MAX_KEYS_PER_CRYPT      (1024 * 2048 *2)
 
 #define CONFIG_NAME             "rawmd5"
 #define STEP                    65536
@@ -307,7 +310,7 @@ static void opencl_md5_reset(struct db_main *db) {
 
 	loaded_hashes = (unsigned int*)mem_alloc(((db->password_count) + 1)*sizeof(unsigned int));
 	cmp_out	      = (unsigned int*)mem_alloc((db->password_count) *sizeof(unsigned int));
-	return_keys   = (struct return_key*)mem_alloc((db->password_count) *sizeof(struct return_key));
+	return_keys   = (struct return_key*)mem_calloc((db->password_count) *sizeof(struct return_key));
 
 	buffer_ld_hashes = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, ((db->password_count) + 1)*sizeof(int), NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating buffer arg loaded_hashes\n");
@@ -315,21 +318,90 @@ static void opencl_md5_reset(struct db_main *db) {
 	buffer_cmp_out = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, (db->password_count) *sizeof(unsigned int), NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating buffer cmp_out\n");
 
-	buffer_return_keys = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, (db->password_count) *sizeof(struct return_key), NULL, &ret_code);
-	HANDLE_CLERROR(ret_code, "Error creating buffer cmp_out\n");
+	buffer_return_keys = clCreateBuffer(context[ocl_gpu_id], CL_MEM_WRITE_ONLY, (db->password_count) *sizeof(struct return_key), NULL, &ret_code);
+	HANDLE_CLERROR(ret_code, "Error creating buffer return_keys\n");
+
+	buffer_mask_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_ONLY, sizeof(struct mask_context) , NULL, &ret_code);
+	HANDLE_CLERROR(ret_code, "Error creating buffer mask gpu\n");
 
 	HANDLE_CLERROR(clSetKernelArg(crk_kernel, 3, sizeof(buffer_ld_hashes), &buffer_ld_hashes), "Error setting argument 4");
 	HANDLE_CLERROR(clSetKernelArg(crk_kernel, 4, sizeof(buffer_cmp_out), &buffer_cmp_out), "Error setting argument 5");
 	HANDLE_CLERROR(clSetKernelArg(crk_kernel, 5, sizeof(buffer_return_keys), &buffer_return_keys), "Error setting argument 6");
+	HANDLE_CLERROR(clSetKernelArg(crk_kernel, 6, sizeof(buffer_mask_gpu), &buffer_mask_gpu), "Error setting argument 6");
 
 	benchmark = 0;
+
+	db -> max_int_keys = 26*26*2;
+
+	db -> format -> params.max_keys_per_crypt = global_work_size;
+	db -> format -> params.min_keys_per_crypt = global_work_size;
 
 	db->format->methods.crypt_all = crypt_all;
 	db->format->methods.get_key = get_key;
 
-	fprintf(stderr,"%d\n", db->password_count);
+	DB = db;
 
 	}
+}
+
+static void check_mask_rawmd5(struct mask_context *msk_ctx) {
+	int i, j, k ;
+
+	if(msk_ctx -> count > PLAINTEXT_LENGTH) msk_ctx -> count = PLAINTEXT_LENGTH;
+	if(msk_ctx -> count > MASK_RANGES_MAX) {
+		fprintf(stderr, "MASK parameters are too small...Exiting...\n");
+		exit(EXIT_FAILURE);
+
+	}
+
+  /* Assumes msk_ctx -> activeRangePos[] is sorted. Check if any range exceeds md5 key limit */
+	for( i = 0; i < msk_ctx->count; i++)
+		if(msk_ctx -> activeRangePos[i] >= PLAINTEXT_LENGTH) {
+			msk_ctx->count = i;
+			break;
+		}
+	j = 0;
+	i = 0;
+	k = 0;
+ /* Append non-active portion to activeRangePos[] for ease of computation inside GPU */
+	while((j <= msk_ctx -> activeRangePos[k]) && (k < msk_ctx -> count)) {
+		if(j == msk_ctx -> activeRangePos[k]) {
+			k++;
+			j++;
+			continue;
+		}
+		msk_ctx -> activeRangePos[msk_ctx -> count + i] = j;
+		i++;
+		j++;
+	}
+	while ((i+msk_ctx->count) < MASK_RANGES_MAX) {
+		msk_ctx -> activeRangePos[msk_ctx -> count + i] = j;
+		i++;
+		j++;
+	}
+
+	for(i = msk_ctx->count; i < MASK_RANGES_MAX; i++)
+		msk_ctx->ranges[msk_ctx -> activeRangePos[i]].count = 0;
+}
+
+static void load_mask(struct db_main *db) {
+	int i;
+
+	if (!db->msk_ctx) {
+		fprintf(stderr, "No given mask.Exiting...\n");
+		exit(EXIT_FAILURE);
+	}
+	memcpy(&msk_ctx, db->msk_ctx, sizeof(struct mask_context));
+	check_mask_rawmd5(&msk_ctx);
+
+	for(i = 0; i < MASK_RANGES_MAX; i++)
+	    printf("%d ",msk_ctx.activeRangePos[i]);
+	printf("\n");
+	for(i = 0; i < MASK_RANGES_MAX; i++)
+	    printf("%d ",msk_ctx.ranges[msk_ctx.activeRangePos[i]].count);
+	printf("\n");
+
+	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], buffer_mask_gpu, CL_TRUE, 0, sizeof(struct mask_context), &msk_ctx, 0, NULL, NULL ), "Failed Copy data to gpu");
 }
 
 static void set_key(char *_key, int index)
@@ -365,17 +437,15 @@ static char *get_key(int index)
 {
 	static char out[PLAINTEXT_LENGTH + 1];
 	int i;
-
+	fprintf(stderr, "GET KEY IN\n");
 	if(index >= loaded_count) return "CHECK";
 	// Potential segfault if removed
-	printf("In get_key:%d\n", index);
 	index = (index < loaded_count) ? index: (loaded_count -1);
-	printf("In get_key:%d\n", index);
 	for (i = 0; i < return_keys[index].length; i++)
 		out[i] = return_keys[index].key[i];
 	out[i] = 0;
 	      //printf("get key:%d\n",i);
-
+	fprintf(stderr,"GET KEY OUT\n");
 	return out;
 }
 
@@ -421,7 +491,14 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 {
 	int count = *pcount;
 	unsigned int i;
+	static uint flag;
+
 	global_work_size = (count + local_work_size - 1) / local_work_size * local_work_size;
+
+	if(!flag) {
+		load_mask(DB);
+		flag = 1;
+	}
 
 	if(loaded_count != (salt->count)) {
 		unsigned int *bin;
