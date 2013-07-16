@@ -1,4 +1,4 @@
-/*
+ /*
  * MD5 OpenCL code is based on Alain Espinosa's OpenCL patches.
  *
  * This software is Copyright (c) 2010, Dhiru Kholia <dhiru.kholia at gmail.com>
@@ -231,9 +231,9 @@ static void init(struct fmt_main *self)
 	        sizeof(max_mem), &max_mem, NULL);
 	while (global_work_size > MIN((1<<26)*4/56, max_mem / BUFSIZE))
 		global_work_size -= local_work_size;
-	
+
 	global_work_size = MAX_KEYS_PER_CRYPT;
-	local_work_size = 64;	
+	local_work_size = 64;
 
 	if (global_work_size)
 		create_clobj(global_work_size, self);
@@ -385,6 +385,25 @@ static void check_mask_rawmd5(struct mask_context *msk_ctx) {
 
 	for(i = msk_ctx->count; i < MASK_RANGES_MAX; i++)
 		msk_ctx->ranges[msk_ctx -> activeRangePos[i]].count = 0;
+
+	/* Sort active ranges in descending order of charchter count */
+	if(msk_ctx->ranges[msk_ctx -> activeRangePos[0]].count < msk_ctx->ranges[msk_ctx -> activeRangePos[1]].count) {
+		i = msk_ctx -> activeRangePos[1];
+		msk_ctx -> activeRangePos[1] = msk_ctx -> activeRangePos[0];
+		msk_ctx -> activeRangePos[0] = i;
+	}
+
+	if(msk_ctx->ranges[msk_ctx -> activeRangePos[0]].count < msk_ctx->ranges[msk_ctx -> activeRangePos[2]].count) {
+		i = msk_ctx -> activeRangePos[2];
+		msk_ctx -> activeRangePos[2] = msk_ctx -> activeRangePos[0];
+		msk_ctx -> activeRangePos[0] = i;
+	}
+
+	if(msk_ctx->ranges[msk_ctx -> activeRangePos[1]].count < msk_ctx->ranges[msk_ctx -> activeRangePos[2]].count) {
+		i = msk_ctx -> activeRangePos[2];
+		msk_ctx -> activeRangePos[2] = msk_ctx -> activeRangePos[1];
+		msk_ctx -> activeRangePos[1] = i;
+	}
 }
 
 static void load_mask(struct db_main *db) {
@@ -654,4 +673,3 @@ struct fmt_main fmt_opencl_rawMD5 = {
 		cmp_exact
 	}
 };
-
