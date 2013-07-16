@@ -150,7 +150,6 @@ void raw_md5_encrypt(__private uint *W, __private uint4 *hash, int len) {
  void cmp(__global uint *hashes,
 	  __global const uint *loaded_hashes,
 	  __private uint4 *hash,
-	  __local uint *lds_cache,
 	  __global uint * cmp_out,
 	  __private uint *keys,
 	  uint len,
@@ -163,19 +162,8 @@ void raw_md5_encrypt(__private uint *W, __private uint4 *hash, int len) {
 	hash[0].s0 += 0x67452301;
 	cache_offset = 0;
 	for(i = 0 , k = 0; i < num_loaded_hashes; i++, k++) {
-		// Cache loaded_hashes into local memory
-		if(i == cache_offset) {
-			tmp = ((cache_offset + LDS_CACHE_SIZE) > num_loaded_hashes) ? (num_loaded_hashes - cache_offset) : LDS_CACHE_SIZE;
-			if(!get_local_id(0)) {
-				for(j = 0; j < tmp; j++)
-					lds_cache[j] = loaded_hashes[cache_offset + j + 1];
-			}
-			barrier(CLK_LOCAL_MEM_FENCE);
-			cache_offset += LDS_CACHE_SIZE;
-			k = 0;
-		}
 
-		loaded_hash = lds_cache[k];
+		loaded_hash = loaded_hashes[i + 1];
 
 		if(hash[0].s0 == loaded_hash) {
 			hashes[i] = hash[0].s0;
@@ -227,11 +215,10 @@ __kernel void md5(__global const uint *keys,
 	uint base = index[gid];
 	uint len = base & 63;
 	uint W[16] = { 0 };
-	uchar *key_byte, activeRangePos[3], rangeNumChars[3], activeRangeCount;
+	uchar activeRangePos[3], rangeNumChars[3];
 
-	int i, j, k, key, t;
+	int i, j, k;
 
-	__local uint lds_cache[LDS_CACHE_SIZE];
 	__local uchar ranges[3 * MAX_GPU_CHARS];
 
 	if(!gid)
@@ -244,8 +231,6 @@ __kernel void md5(__global const uint *keys,
 
 	for(i = 0; i < 3; i++)
 		rangeNumChars[i] = msk_ctx[0].ranges[activeRangePos[i]].count;
-
-	activeRangeCount = msk_ctx[0].count;
 
 	if(!get_local_id(0)) {
 		for(i = 0; i < MAX_GPU_CHARS; i++) {
@@ -260,56 +245,29 @@ __kernel void md5(__global const uint *keys,
 	for (i = 0; i < (len+3)/4; i++)
 		W[i] = keys[i];
 
-	key_byte = W;
 	i = j = k = 0;
-	if(rangeNumChars[2]) key_byte[activeRangePos[2]] = ranges[2*MAX_GPU_CHARS];
-	if(rangeNumChars[1]) key_byte[activeRangePos[1]] = ranges[MAX_GPU_CHARS];
+	if (rangeNumChars[2]) PUTCHAR(W, activeRangePos[2], ranges[2 * MAX_GPU_CHARS]);
+	if (rangeNumChars[1]) PUTCHAR(W, activeRangePos[1], ranges[MAX_GPU_CHARS]);
 
 	do {
 		do {
 			for (i = 0; i < rangeNumChars[0]; i++) {
-				key_byte[activeRangePos[0]] = ranges[i];
+				PUTCHAR(W, activeRangePos[0], ranges[i]);
 				raw_md5_encrypt(W, &hash, len);
-				cmp(hashes, loaded_hashes, &hash, lds_cache, cmp_out, W, len, return_keys);
+				cmp(hashes, loaded_hashes, &hash, cmp_out, W, len, return_keys);
 			}
 
 			j++;
-			key_byte[activeRangePos[1]] = ranges[j + MAX_GPU_CHARS];
+			PUTCHAR(W, activeRangePos[1], ranges[j + MAX_GPU_CHARS]);
 
 		} while ( j < rangeNumChars[1]);
 
 		k++;
-		key_byte[activeRangePos[2]] = ranges[k + 2*MAX_GPU_CHARS];
+		PUTCHAR(W, activeRangePos[2], ranges[k + 2 * MAX_GPU_CHARS]);
 
-		if(rangeNumChars[1]) {key_byte[activeRangePos[1]] = ranges[MAX_GPU_CHARS];}
+		PUTCHAR(W, activeRangePos[1], ranges[MAX_GPU_CHARS]);
 		j = 0;
 
 	} while( k < rangeNumChars[2]);
 }
 
-/*
-	if(!gid) {
-		 printf("IN KErnel:\n");
-		 for(i = 0; i < rangeNumChars[0]; i++) {
-			printf("%c ",ranges[i]) ;
-		 }
-		 printf("\n");
-		 for(i = 0; i < rangeNumChars[1]; i++) {
-			printf("%c ",ranges[i + MAX_GPU_CHARS]) ;
-		 }
-		 printf("\n");
-		 for(i = 0; i < rangeNumChars[2]; i++) {
-			printf("%c ",ranges[i + 2*MAX_GPU_CHARS]) ;
-		 }
-		 printf("\n ACTIVE RANGE Pos:");
-
-		 for(i = 0; i < 3; i++)
-			printf("%d ",activeRangePos[i]) ;
-
-		printf("\n RANGEnumChars:");
-
-		for(i = 0; i < 3; i++)
-			printf("%d ",rangeNumChars[i]) ;
-
-		printf("\n");
-	}*/

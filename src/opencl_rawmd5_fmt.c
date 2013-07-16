@@ -60,7 +60,7 @@ static struct db_main *DB;
 #define MAX(a, b)               (((a) > (b)) ? (a) : (b))
 
 #define MIN_KEYS_PER_CRYPT      1024
-#define MAX_KEYS_PER_CRYPT      (1024 * 2048 *2)
+#define MAX_KEYS_PER_CRYPT      (1024 * 2048 )
 
 #define CONFIG_NAME             "rawmd5"
 #define STEP                    65536
@@ -231,6 +231,9 @@ static void init(struct fmt_main *self)
 	        sizeof(max_mem), &max_mem, NULL);
 	while (global_work_size > MIN((1<<26)*4/56, max_mem / BUFSIZE))
 		global_work_size -= local_work_size;
+	
+	global_work_size = MAX_KEYS_PER_CRYPT;
+	local_work_size = 64;	
 
 	if (global_work_size)
 		create_clobj(global_work_size, self);
@@ -331,7 +334,7 @@ static void opencl_md5_reset(struct db_main *db) {
 
 	benchmark = 0;
 
-	db -> max_int_keys = 26*26*2;
+	db -> max_int_keys = 26*26*4;
 
 	db -> format -> params.max_keys_per_crypt = global_work_size;
 	db -> format -> params.min_keys_per_crypt = global_work_size;
@@ -651,3 +654,4 @@ struct fmt_main fmt_opencl_rawMD5 = {
 		cmp_exact
 	}
 };
+
