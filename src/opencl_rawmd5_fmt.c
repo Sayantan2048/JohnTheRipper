@@ -334,7 +334,7 @@ static void opencl_md5_reset(struct db_main *db) {
 
 	benchmark = 0;
 
-	db -> max_int_keys = 26*26*4;
+	db -> max_int_keys = 26*26*10;
 
 	db -> format -> params.max_keys_per_crypt = global_work_size;
 	db -> format -> params.min_keys_per_crypt = global_work_size;
@@ -407,7 +407,7 @@ static void check_mask_rawmd5(struct mask_context *msk_ctx) {
 }
 
 static void load_mask(struct db_main *db) {
-	int i;
+	int i, j;
 
 	if (!db->msk_ctx) {
 		fprintf(stderr, "No given mask.Exiting...\n");
@@ -422,6 +422,18 @@ static void load_mask(struct db_main *db) {
 	for(i = 0; i < MASK_RANGES_MAX; i++)
 	    printf("%d ",msk_ctx.ranges[msk_ctx.activeRangePos[i]].count);
 	printf("\n");
+
+	/*
+	for(i = 0; i < msk_ctx.count; i++)
+	  printf(" %d ", msk_ctx.activeRangePos[i]);*/
+	for(i = 0; i < msk_ctx.count; i++){
+			for(j = 0; j < msk_ctx.ranges[msk_ctx.activeRangePos[i]].count; j++)
+				printf("%c ",msk_ctx.ranges[msk_ctx.activeRangePos[i]].chars[j]);
+			printf("\n");
+			//checkRange(&msk_ctx, msk_ctx.activeRangePos[i]) ;
+			printf("START:%c",msk_ctx.ranges[msk_ctx.activeRangePos[i]].start);
+			printf("\n");
+	}
 
 	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], buffer_mask_gpu, CL_TRUE, 0, sizeof(struct mask_context), &msk_ctx, 0, NULL, NULL ), "Failed Copy data to gpu");
 }
@@ -439,6 +451,8 @@ static void set_key(char *_key, int index)
 	}
 	if (len)
 		saved_plain[key_idx++] = *key & (0xffffffffU >> (32 - (len << 3)));
+
+	
 }
 
 static char *get_key_self_test(int index)
@@ -514,6 +528,7 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 	int count = *pcount;
 	unsigned int i;
 	static uint flag;
+	cl_event evnt;
 
 	global_work_size = (count + local_work_size - 1) / local_work_size * local_work_size;
 
@@ -553,7 +568,9 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], buffer_keys, CL_TRUE, 0, 4 * key_idx, saved_plain, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_keys");
 	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], buffer_idx, CL_TRUE, 0, 4 * global_work_size, saved_idx, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_idx");
 
-	HANDLE_CLERROR(clEnqueueNDRangeKernel(queue[ocl_gpu_id], crk_kernel, 1, NULL, &global_work_size, &local_work_size, 0, NULL, NULL), "failed in clEnqueueNDRangeKernel");
+	HANDLE_CLERROR(clEnqueueNDRangeKernel(queue[ocl_gpu_id], crk_kernel, 1, NULL, &global_work_size, &local_work_size, 0, NULL, &evnt), "failed in clEnqueueNDRangeKernel");
+
+	HANDLE_CLERROR(clWaitForEvents(1, &evnt), "Wait for event failed");
 
 	// read back compare results
 	HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], buffer_cmp_out, CL_TRUE, 0, sizeof(cl_uint) * loaded_count, cmp_out, 0, NULL, NULL), "failed in reading cmp data back");
@@ -568,11 +585,14 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 	if(cmp_out[0]) {
 		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], buffer_out, CL_TRUE, 0, sizeof(cl_uint) * loaded_count, partial_hashes, 0, NULL, NULL), "failed in reading hashes back");
 		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], buffer_return_keys, CL_TRUE, 0, sizeof(struct return_key) * loaded_count, return_keys, 0, NULL, NULL), "failed in reading keys back");
+		HANDLE_CLERROR(clFinish(queue[ocl_gpu_id]), "cl finish failed");
 		return loaded_count;
 	}
 
-	else
+	else { 
+		HANDLE_CLERROR(clFinish(queue[ocl_gpu_id]), "cl finish failed");
 		return 0;
+	}
 }
 
 static int cmp_all(void *binary, int count)
