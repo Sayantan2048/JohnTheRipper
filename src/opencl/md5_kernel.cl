@@ -16,12 +16,17 @@
 
 #include "opencl_device_info.h"
 #include "opencl_shared_mask.h"
+#include "opencl_rawmd5_fmt.h"
 
 #if gpu_amd(DEVICE_INFO)
 #define USE_BITSELECT
 #endif
 
 #define LDS_CACHE_SIZE		64
+
+#define BITMAP_HASH_0 	    (BITMAP_SIZE_0 - 1)
+#define BITMAP_HASH_1	    (BITMAP_SIZE_1 - 1)
+
 /* Macros for reading/writing chars from int32's (from rar_kernel.cl) */
 #define GETCHAR(buf, index) (((uchar*)(buf))[(index)])
 #define PUTCHAR(buf, index, val) (buf)[(index)>>2] = ((buf)[(index)>>2] & ~(0xffU << (((index) & 3) << 3))) + ((val) << (((index) & 3) << 3))
@@ -149,33 +154,52 @@ void raw_md5_encrypt(__private uint *W, __private uint4 *hash, int len) {
 
  void cmp(__global uint *hashes,
 	  __global const uint *loaded_hashes,
+	  __local uint *bitmap0,
+	  __local uint *bitmap1,
 	  __private uint4 *hash,
 	  __global uint * cmp_out,
 	  __private uint *keys,
 	  uint len,
-	  __global struct return_key *return_keys) {
+	  __global struct return_key *return_keys, uint gid) {
 
-	uint i, j, loaded_hash, cache_offset, tmp, k;
+	uint i, j, loaded_hash, tmp;
 	uint num_loaded_hashes = loaded_hashes[0];
 	uint num_keys = get_global_size(0);
 
 	hash[0].s0 += 0x67452301;
-	cache_offset = 0;
-	for(i = 0 , k = 0; i < num_loaded_hashes; i++, k++) {
+	hash[0].s1 += 0xefcdab89;
+	hash[0].s2 += 0x98badcfe;
+	hash[0].s3 += 0x10325476;
 
-		loaded_hash = loaded_hashes[i + 1];
+	for(i = 0; i < num_loaded_hashes; i++) {
 
-		if(hash[0].s0 == loaded_hash) {
-			hashes[i] = hash[0].s0;
-			hashes[1 * num_loaded_hashes + i] = hash[0].s1 + 0xefcdab89;
-			hashes[2 * num_loaded_hashes + i] = hash[0].s2 + 0x98badcfe;
-			hashes[3 * num_loaded_hashes + i] = hash[0].s3 + 0x10325476;
+		loaded_hash = hash[0].s0 & BITMAP_HASH_1;
+		tmp = (bitmap0[loaded_hash >> 5] >> (loaded_hash & 31)) & 1U ;
+		if(tmp) {
 
-			for (j = 0; j < (len+3)/4; j++)
-			    return_keys[i].key[j] = keys[j];
-			return_keys[i].length = len;
+			loaded_hash = hash[0].s1 & BITMAP_HASH_1;
+			tmp &= (bitmap1[loaded_hash >> 5] >> (loaded_hash & 31)) & 1U;
+			if(tmp) {
 
-			cmp_out[i] = 0xffffffff;
+				loaded_hash = loaded_hashes[i * 4 + 3];
+				if(hash[0].s2 == loaded_hash) {
+
+					loaded_hash = loaded_hashes[i * 4 + 4];
+					if(hash[0].s3 == loaded_hash) {
+
+						hashes[i] = hash[0].s0;
+						hashes[1 * num_loaded_hashes + i] = hash[0].s1;
+						hashes[2 * num_loaded_hashes + i] = hash[0].s2;
+						hashes[3 * num_loaded_hashes + i] = hash[0].s3;
+
+						for (j = 0; j < (len+3)/4; j++)
+							return_keys[i].key[j] = keys[j];
+						return_keys[i].length = len;
+
+						cmp_out[i] = 0xffffffff;
+					}
+				}
+			}
 		}
 	}
  }
@@ -202,16 +226,19 @@ __kernel void md5_self_test(__global const uint *keys, __global const uint *inde
 	hashes[3 * num_keys + gid] = hash.s3 + 0x10325476;
 }
 
-__kernel void md5(__global const uint *keys,
-		  __global const uint *index,
+__kernel void md5(__global uint *keys,
+		  __global uint *index,
 		  __global uint *hashes,
 		  __global const uint* loaded_hashes,
 		  __global uint *cmp_out,
 		  __global struct return_key *return_keys,
-		  __global struct mask_context *msk_ctx)
+		  __global struct mask_context *msk_ctx,
+		  __global struct bitmap_ctx *bitmap)
+
+
 {
 	uint4 hash;
-	uint gid = get_global_id(0);
+	uint gid = get_global_id(0), lid = get_local_id(0);
 	uint base = index[gid];
 	uint len = base & 63;
 	uint W[16] = { 0 };
@@ -219,7 +246,9 @@ __kernel void md5(__global const uint *keys,
 
 	int i, j, k;
 
-	__local uchar ranges[3 * MAX_GPU_CHARS];
+	__local uchar ranges[4 * MAX_GPU_CHARS];
+	__local uint sbitmap0[BITMAP_SIZE_1 >> 5];
+	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
 
 	if(!gid)
 		for (i = 0; i < loaded_hashes[0]; i++)
@@ -232,13 +261,18 @@ __kernel void md5(__global const uint *keys,
 	for(i = 0; i < 3; i++)
 		rangeNumChars[i] = msk_ctx[0].ranges[activeRangePos[i]].count;
 
-	if(!get_local_id(0)) {
-		for(i = 0; i < MAX_GPU_CHARS; i++) {
-		ranges[i] = msk_ctx[0].ranges[activeRangePos[0]].chars[i];
-		ranges[i + MAX_GPU_CHARS] = msk_ctx[0].ranges[activeRangePos[1]].chars[i];
-		ranges[i + 2 * MAX_GPU_CHARS] = msk_ctx[0].ranges[activeRangePos[2]].chars[i];
-		}
-	}
+	// Parallel load , works only if LWS is 64
+	ranges[lid] = msk_ctx[0].ranges[activeRangePos[0]].chars[lid];
+	ranges[lid + MAX_GPU_CHARS] = msk_ctx[0].ranges[activeRangePos[1]].chars[lid];
+	ranges[lid + 2 * MAX_GPU_CHARS] = msk_ctx[0].ranges[activeRangePos[2]].chars[lid];
+
+	for(i = 0; i < ((BITMAP_SIZE_1 >> 5) / LWS); i++)
+		sbitmap0[i*LWS + lid] = bitmap[0].bitmap0[i*LWS + lid];
+
+	for(i = 0; i < ((BITMAP_SIZE_1 >> 5)/ LWS); i++)
+		sbitmap1[i*LWS + lid] = bitmap[0].bitmap1[i*LWS + lid];
+
+
 	barrier(CLK_LOCAL_MEM_FENCE);
 
 	keys += base >> 6;
@@ -254,7 +288,7 @@ __kernel void md5(__global const uint *keys,
 			for (i = 0; i < rangeNumChars[0]; i++) {
 				PUTCHAR(W, activeRangePos[0], ranges[i]);
 				raw_md5_encrypt(W, &hash, len);
-				cmp(hashes, loaded_hashes, &hash, cmp_out, W, len, return_keys);
+				cmp(hashes, loaded_hashes, sbitmap0, sbitmap1, &hash, cmp_out, W, len, return_keys, gid);
 			}
 
 			j++;
