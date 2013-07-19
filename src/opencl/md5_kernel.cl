@@ -226,14 +226,14 @@ __kernel void md5_self_test(__global const uint *keys, __global const uint *inde
 	hashes[3 * num_keys + gid] = hash.s3 + 0x10325476;
 }
 
-__kernel void md5(__global uint *keys,
-		  __global uint *index,
-		  __global uint *hashes,
-		  __global const uint* loaded_hashes,
-		  __global uint *cmp_out,
-		  __global struct return_key *return_keys,
-		  __global struct mask_context *msk_ctx,
-		  __global struct bitmap_ctx *bitmap)
+__kernel void md5_nnn(__global uint *keys,
+		      __global uint *index,
+		      __global uint *hashes,
+		      __global const uint* loaded_hashes,
+		      __global uint *cmp_out,
+		      __global struct return_key *return_keys,
+		      __global struct mask_context *msk_ctx,
+		      __global struct bitmap_ctx *bitmap)
 
 
 {
@@ -305,3 +305,157 @@ __kernel void md5(__global uint *keys,
 	} while( k < rangeNumChars[2]);
 }
 
+__kernel void md5_ccc(__global uint *keys,
+		      __global uint *index,
+		      __global uint *hashes,
+		      __global const uint* loaded_hashes,
+		      __global uint *cmp_out,
+		      __global struct return_key *return_keys,
+		      __global struct mask_context *msk_ctx,
+		      __global struct bitmap_ctx *bitmap)
+
+
+{
+	uint4 hash;
+	uint gid = get_global_id(0), lid = get_local_id(0);
+	uint base = index[gid];
+	uint len = base & 63;
+	uint W[16] = { 0 };
+	uchar activeRangePos[3], rangeNumChars[3], start[3];
+
+	int i, j, k;
+
+	__local uint sbitmap0[BITMAP_SIZE_1 >> 5];
+	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
+
+	if(!gid)
+		for (i = 0; i < loaded_hashes[0]; i++)
+			cmp_out[i] = 0;
+
+	for(i = 0; i < 3; i++) {
+		activeRangePos[i] = msk_ctx[0].activeRangePos[i];
+	}
+
+	for(i = 0; i < 3; i++) {
+		rangeNumChars[i] = msk_ctx[0].ranges[activeRangePos[i]].count;
+		start[i] = msk_ctx[0].ranges[activeRangePos[i]].start;
+	}
+
+	for(i = 0; i < ((BITMAP_SIZE_1 >> 5) / LWS); i++)
+		sbitmap0[i*LWS + lid] = bitmap[0].bitmap0[i*LWS + lid];
+
+	for(i = 0; i < ((BITMAP_SIZE_1 >> 5)/ LWS); i++)
+		sbitmap1[i*LWS + lid] = bitmap[0].bitmap1[i*LWS + lid];
+
+
+	barrier(CLK_LOCAL_MEM_FENCE);
+
+	keys += base >> 6;
+	for (i = 0; i < (len+3)/4; i++)
+		W[i] = keys[i];
+
+	i = j = k = 0;
+	if (rangeNumChars[2]) PUTCHAR(W, activeRangePos[2], start[2]);
+	if (rangeNumChars[1]) PUTCHAR(W, activeRangePos[1], start[1]);
+
+	do {
+		do {
+			for (i = 0; i < rangeNumChars[0]; i++) {
+				PUTCHAR(W, activeRangePos[0], (start[0] + i));
+				raw_md5_encrypt(W, &hash, len);
+				cmp(hashes, loaded_hashes, sbitmap0, sbitmap1, &hash, cmp_out, W, len, return_keys, gid);
+			}
+
+			j++;
+			PUTCHAR(W, activeRangePos[1], (start[1] + j));
+
+		} while ( j < rangeNumChars[1]);
+
+		k++;
+		PUTCHAR(W, activeRangePos[2], (start[2] + k));
+
+		PUTCHAR(W, activeRangePos[1], start[1]);
+		j = 0;
+
+	} while( k < rangeNumChars[2]);
+}
+
+__kernel void md5_cnn(__global uint *keys,
+		      __global uint *index,
+		      __global uint *hashes,
+		      __global const uint* loaded_hashes,
+		      __global uint *cmp_out,
+		      __global struct return_key *return_keys,
+		      __global struct mask_context *msk_ctx,
+		      __global struct bitmap_ctx *bitmap)
+
+
+{
+	uint4 hash;
+	uint gid = get_global_id(0), lid = get_local_id(0);
+	uint base = index[gid];
+	uint len = base & 63;
+	uint W[16] = { 0 };
+	uchar activeRangePos[3], rangeNumChars[3], start;
+
+	int i, j, k;
+
+	__local uchar ranges[2 * MAX_GPU_CHARS];
+	__local uint sbitmap0[BITMAP_SIZE_1 >> 5];
+	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
+
+	if(!gid)
+		for (i = 0; i < loaded_hashes[0]; i++)
+			cmp_out[i] = 0;
+
+	for(i = 0; i < 3; i++) {
+		activeRangePos[i] = msk_ctx[0].activeRangePos[i];
+	}
+
+	for(i = 0; i < 3; i++)
+		rangeNumChars[i] = msk_ctx[0].ranges[activeRangePos[i]].count;
+
+	start = msk_ctx[0].ranges[activeRangePos[0]].start;
+
+	// Parallel load , works only if LWS is 64
+	ranges[lid] = msk_ctx[0].ranges[activeRangePos[1]].chars[lid];
+	ranges[lid + MAX_GPU_CHARS] = msk_ctx[0].ranges[activeRangePos[2]].chars[lid];
+
+	for(i = 0; i < ((BITMAP_SIZE_1 >> 5) / LWS); i++)
+		sbitmap0[i*LWS + lid] = bitmap[0].bitmap0[i*LWS + lid];
+
+	for(i = 0; i < ((BITMAP_SIZE_1 >> 5)/ LWS); i++)
+		sbitmap1[i*LWS + lid] = bitmap[0].bitmap1[i*LWS + lid];
+
+
+	barrier(CLK_LOCAL_MEM_FENCE);
+
+	keys += base >> 6;
+	for (i = 0; i < (len+3)/4; i++)
+		W[i] = keys[i];
+
+	i = j = k = 0;
+	if (rangeNumChars[2]) PUTCHAR(W, activeRangePos[2], ranges[MAX_GPU_CHARS]);
+	if (rangeNumChars[1]) PUTCHAR(W, activeRangePos[1], ranges[0]);
+
+	do {
+		do {
+			for (i = 0; i < rangeNumChars[0]; i++) {
+				PUTCHAR(W, activeRangePos[0], (start + i));
+				raw_md5_encrypt(W, &hash, len);
+				cmp(hashes, loaded_hashes, sbitmap0, sbitmap1, &hash, cmp_out, W, len, return_keys, gid);
+			}
+
+			j++;
+			PUTCHAR(W, activeRangePos[1], ranges[j]);
+
+		} while ( j < rangeNumChars[1]);
+
+		k++;
+		PUTCHAR(W, activeRangePos[2], ranges[k + MAX_GPU_CHARS]);
+
+		PUTCHAR(W, activeRangePos[1], ranges[0]);
+		j = 0;
+
+	} while( k < rangeNumChars[2]);
+}

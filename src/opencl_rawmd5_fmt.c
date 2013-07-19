@@ -45,7 +45,7 @@ struct return_key {
 
 cl_mem pinned_saved_keys, pinned_saved_idx, pinned_partial_hashes;
 cl_mem buffer_keys, buffer_idx, buffer_out, buffer_ld_hashes, buffer_cmp_out, buffer_return_keys, buffer_mask_gpu;
-cl_kernel crk_kernel;
+cl_kernel crk_kernel_nnn, crk_kernel_ccc, crk_kernel_cnn, crk_kernel;
 static cl_uint *partial_hashes;
 static cl_uint *res_hashes ;
 static unsigned int *saved_plain, *saved_idx, *loaded_hashes, *cmp_out;
@@ -128,10 +128,6 @@ static void create_clobj(int kpc, struct fmt_main * self)
 	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 1, sizeof(buffer_idx), (void *) &buffer_idx), "Error setting argument 2");
 	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 2, sizeof(buffer_out), (void *) &buffer_out), "Error setting argument 3");
 
-	HANDLE_CLERROR(clSetKernelArg(crk_kernel, 0, sizeof(buffer_keys), (void *) &buffer_keys), "Error setting argument 1");
-	HANDLE_CLERROR(clSetKernelArg(crk_kernel, 1, sizeof(buffer_idx), (void *) &buffer_idx), "Error setting argument 2");
-	HANDLE_CLERROR(clSetKernelArg(crk_kernel, 2, sizeof(buffer_out), (void *) &buffer_out), "Error setting argument 3");
-
 	global_work_size = kpc;
 }
 
@@ -161,7 +157,9 @@ static void done(void)
 	MEM_FREE(return_keys);
 
 	HANDLE_CLERROR(clReleaseKernel(crypt_kernel), "Release self_test kernel");
-	HANDLE_CLERROR(clReleaseKernel(crk_kernel), "Release cracking kernel");
+	HANDLE_CLERROR(clReleaseKernel(crk_kernel_nnn), "Release cracking kernel");
+	HANDLE_CLERROR(clReleaseKernel(crk_kernel_ccc), "Release cracking kernel");
+	HANDLE_CLERROR(clReleaseKernel(crk_kernel_cnn), "Release cracking kernel");
 	HANDLE_CLERROR(clReleaseProgram(program[ocl_gpu_id]), "Release Program");
 }
 
@@ -204,7 +202,13 @@ static void init(struct fmt_main *self)
 	crypt_kernel = clCreateKernel(program[ocl_gpu_id], "md5_self_test", &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating kernel. Double-check kernel name?");
 
-	crk_kernel = clCreateKernel(program[ocl_gpu_id], "md5", &ret_code);
+	crk_kernel_nnn = clCreateKernel(program[ocl_gpu_id], "md5_nnn", &ret_code);
+	HANDLE_CLERROR(ret_code, "Error creating kernel. Double-check kernel name?");
+
+	crk_kernel_ccc = clCreateKernel(program[ocl_gpu_id], "md5_ccc", &ret_code);
+	HANDLE_CLERROR(ret_code, "Error creating kernel. Double-check kernel name?");
+
+	crk_kernel_cnn = clCreateKernel(program[ocl_gpu_id], "md5_cnn", &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating kernel. Double-check kernel name?");
 
 	local_work_size = global_work_size = 0;
@@ -309,6 +313,18 @@ static void clear_keys(void)
 	key_idx = 0;
 }
 
+static void setKernelArgs(cl_kernel *kernel) {
+
+	HANDLE_CLERROR(clSetKernelArg(*kernel, 0, sizeof(buffer_keys), &buffer_keys), "Error setting argument 1");
+	HANDLE_CLERROR(clSetKernelArg(*kernel, 1, sizeof(buffer_idx), &buffer_idx), "Error setting argument 2");
+	HANDLE_CLERROR(clSetKernelArg(*kernel, 2, sizeof(buffer_out), &buffer_out), "Error setting argument 3");
+	HANDLE_CLERROR(clSetKernelArg(*kernel, 3, sizeof(buffer_ld_hashes), &buffer_ld_hashes), "Error setting argument 4");
+	HANDLE_CLERROR(clSetKernelArg(*kernel, 4, sizeof(buffer_cmp_out), &buffer_cmp_out), "Error setting argument 5");
+	HANDLE_CLERROR(clSetKernelArg(*kernel, 5, sizeof(buffer_return_keys), &buffer_return_keys), "Error setting argument 6");
+	HANDLE_CLERROR(clSetKernelArg(*kernel, 6, sizeof(buffer_mask_gpu), &buffer_mask_gpu), "Error setting argument 7");
+	HANDLE_CLERROR(clSetKernelArg(*kernel, 7, sizeof(buffer_bitmap), &buffer_bitmap), "Error setting argument 8");
+}
+
 static void opencl_md5_reset(struct db_main *db) {
 
 
@@ -334,15 +350,13 @@ static void opencl_md5_reset(struct db_main *db) {
 	buffer_mask_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_ONLY, sizeof(struct mask_context) , NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating buffer mask gpu\n");
 
-	HANDLE_CLERROR(clSetKernelArg(crk_kernel, 3, sizeof(buffer_ld_hashes), &buffer_ld_hashes), "Error setting argument 4");
-	HANDLE_CLERROR(clSetKernelArg(crk_kernel, 4, sizeof(buffer_cmp_out), &buffer_cmp_out), "Error setting argument 5");
-	HANDLE_CLERROR(clSetKernelArg(crk_kernel, 5, sizeof(buffer_return_keys), &buffer_return_keys), "Error setting argument 6");
-	HANDLE_CLERROR(clSetKernelArg(crk_kernel, 6, sizeof(buffer_mask_gpu), &buffer_mask_gpu), "Error setting argument 7");
-	HANDLE_CLERROR(clSetKernelArg(crk_kernel, 7, sizeof(buffer_bitmap), &buffer_bitmap), "Error setting argument 8");
+	setKernelArgs(&crk_kernel_nnn);
+	setKernelArgs(&crk_kernel_ccc);
+	setKernelArgs(&crk_kernel_cnn);
 
 	benchmark = 0;
 
-	db -> max_int_keys = 26*26*10;
+	db -> max_int_keys = 26 * 26 * 10;
 
 	db -> format -> params.max_keys_per_crypt = global_work_size;
 	db -> format -> params.min_keys_per_crypt = global_work_size;
@@ -351,6 +365,8 @@ static void opencl_md5_reset(struct db_main *db) {
 	db->format->methods.get_key = get_key;
 
 	DB = db;
+
+	crk_kernel = crk_kernel_nnn;
 
 	}
 }
@@ -372,7 +388,6 @@ static void load_hash(struct db_salt *salt) {
 			loaded_hashes[i*4 + 2] = bin[1];
 			loaded_hashes[i*4 + 3] = bin[2];
 			loaded_hashes[i*4 + 4] = bin[3];
-			printf("in cryptall:%d %d %d %d\n", loaded_hashes[i*4+1], loaded_hashes[i*4+2], loaded_hashes[i*4+3], loaded_hashes[i*4+4]);
 			i++ ;
 		}
 	} while ((pw = pw -> next)) ;
@@ -487,6 +502,60 @@ static void load_mask(struct db_main *db) {
 	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], buffer_mask_gpu, CL_TRUE, 0, sizeof(struct mask_context), &msk_ctx, 0, NULL, NULL ), "Failed Copy data to gpu");
 }
 
+/* crk_kernel_ccc: optimized for kernel with all 3 ranges consecutive.
+ * crk_kernel_nnn: optimized for kernel with no consecutive ranges.
+ * crk_kernel_cnn: optimized for kernel with 1st range being consecutive and remaining ranges non-consecutive.
+ *
+ * select_kernel() assumes that the active ranges are arranged according to decreasing character count, which is taken
+ * care of inside check_mask_rawmd5().
+ *
+ * crk_kernel_ccc used for mask types: ccc, cc, c.
+ * crk_kernel_nnn used for mask types: nnn, nnc, ncn, ncc, nc, nn, n.
+ * crk_kernel_cnn used for mask types: cnn, cnc, ccn, cn.
+ */
+
+static void select_kernel(struct mask_context *msk_ctx) {
+
+	if (!(msk_ctx->ranges[msk_ctx->activeRangePos[0]].start)) {
+		crk_kernel = crk_kernel_nnn;
+		fprintf(stderr,"Using kernel md5_nnn...\n" );
+		return;
+	}
+
+	else {
+		crk_kernel = crk_kernel_ccc;
+
+		if ((msk_ctx->count) > 1) {
+			if (!(msk_ctx->ranges[msk_ctx->activeRangePos[1]].start)) {
+				crk_kernel = crk_kernel_cnn;
+				fprintf(stderr,"Using kernel md5_cnn...\n" );
+				return;
+			}
+
+			else {
+				crk_kernel = crk_kernel_ccc;
+
+				/* For type ccn */
+				if ((msk_ctx->count) == 3)
+					if (!(msk_ctx->ranges[msk_ctx->activeRangePos[2]].start))  {
+						crk_kernel = crk_kernel_cnn;
+						if ((msk_ctx->ranges[msk_ctx->activeRangePos[2]].count) > 64) {
+							fprintf(stderr,"Raw-MD5-opencl failed processing mask type ccn.\n" );
+						}
+						fprintf(stderr,"Using kernel md5_cnn...\n" );
+						return;
+					}
+
+				fprintf(stderr,"Using kernel md5_ccc...\n" );
+				return;
+			}
+		}
+
+		fprintf(stderr,"Using kernel md5_ccc...\n" );
+		return;
+	}
+}
+
 static void set_key(char *_key, int index)
 {
 	const ARCH_WORD_32 *key = (ARCH_WORD_32*)_key;
@@ -522,15 +591,12 @@ static char *get_key(int index)
 {
 	static char out[PLAINTEXT_LENGTH + 1];
 	int i;
-	fprintf(stderr, "GET KEY IN\n");
 	if(index >= loaded_count) return "CHECK";
 	// Potential segfault if removed
 	index = (index < loaded_count) ? index: (loaded_count -1);
 	for (i = 0; i < return_keys[index].length; i++)
 		out[i] = return_keys[index].key[i];
 	out[i] = 0;
-	      //printf("get key:%d\n",i);
-	fprintf(stderr,"GET KEY OUT\n");
 	return out;
 }
 
@@ -583,6 +649,7 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 
 	if(!flag) {
 		load_mask(DB);
+		select_kernel(&msk_ctx);
 		flag = 1;
 	}
 
@@ -614,7 +681,6 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], buffer_out, CL_TRUE, 0, sizeof(cl_uint) * loaded_count, partial_hashes, 0, NULL, NULL), "failed in reading hashes back");
 		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], buffer_return_keys, CL_TRUE, 0, sizeof(struct return_key) * loaded_count, return_keys, 0, NULL, NULL), "failed in reading keys back");
 		HANDLE_CLERROR(clFinish(queue[ocl_gpu_id]), "cl finish failed");
-		fprintf(stderr, "COOL\n");
 		return loaded_count;
 	}
 
