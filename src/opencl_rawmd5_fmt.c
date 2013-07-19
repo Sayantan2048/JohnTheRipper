@@ -331,7 +331,6 @@ static void opencl_md5_reset(struct db_main *db) {
 	if(db) {
 
 	loaded_hashes = (unsigned int*)mem_alloc(((db->password_count) * 4 + 1)*sizeof(unsigned int));
-
 	cmp_out	      = (unsigned int*)mem_alloc((db->password_count) *sizeof(unsigned int));
 	return_keys   = (struct return_key*)mem_calloc((db->password_count) *sizeof(struct return_key));
 
@@ -642,7 +641,7 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 {
 	int count = *pcount;
 	unsigned int i;
-	static uint flag;
+	static uint flag, multiplier;
 	cl_event evnt;
 
 	global_work_size = (count + local_work_size - 1) / local_work_size * local_work_size;
@@ -650,8 +649,13 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 	if(!flag) {
 		load_mask(DB);
 		select_kernel(&msk_ctx);
+		multiplier = 1;
+		for (i = 0; i < msk_ctx.count; i++)
+			multiplier *= msk_ctx.ranges[msk_ctx.activeRangePos[i]].count;
+		fprintf(stderr, "Multiply the end c/s with:%d\n", multiplier);
 		flag = 1;
 	}
+
 
 	if(loaded_count != (salt->count)) {
 		load_hash(salt);
