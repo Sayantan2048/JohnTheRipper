@@ -641,7 +641,7 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 {
 	int count = *pcount;
 	unsigned int i;
-	static uint flag, multiplier;
+	static unsigned int flag, multiplier;
 	cl_event evnt;
 
 	global_work_size = (count + local_work_size - 1) / local_work_size * local_work_size;
