@@ -17,7 +17,7 @@
  *
  * (This is a heavily cut-down "BSD license".)
  */
-
+#include "opencl_shared_mask.h"
 #include "opencl_nt_fmt.h"
 
 //Init values
@@ -33,6 +33,7 @@
 #define BITMAP_HASH_1	    (BITMAP_SIZE_1 - 1)
 
 #define GET_CHAR(x,elem) (((x)>>elem) & 0xFF)
+#define PUTCHAR(buf, index, val) (buf)[(index)>>1] = ((buf)[(index)>>1] & ~(0xffU << (((index) & 1) << 4))) + ((val) << (((index) & 1) << 4))
 
 #ifdef __ENDIAN_LITTLE__
 	//little-endian
@@ -161,7 +162,8 @@ void cmp(__global uint *hashes,
 	  __private uint *hash,
 	  __global uint *cmp_out,
 	  __global uint *outKeyIdx,
-	  uint gid) {
+	  uint gid,
+	  uint ctr) {
 
 	uint num_loaded_hashes = loaded_hashes[0];
 	uint loaded_hash, i, tmp;
@@ -188,6 +190,7 @@ void cmp(__global uint *hashes,
 						hashes[3 * num_loaded_hashes + i] = hash[3];
 						cmp_out[i] = 0xffffffff;
 						outKeyIdx[2 * i] = gid ;
+						outKeyIdx[2 * i + 1] = ctr;
 					}
 				}
 			}
@@ -220,18 +223,21 @@ __kernel void nt(const __global uint *keys ,
 		 const __global uint *loaded_hashes,
 		       __global uint *cmp_out,
 		       __global uint *outKeyIdx,
-		       __global struct bitmap_ctx *bitmap)
+		 const __global struct bitmap_ctx *bitmap,
+		 const __global struct mask_context *msk_ctx)
 {
 	uint gid = get_global_id(0);
 	uint lid = get_local_id(0);
 	uint nt_buffer[12] = { 0 };
 	uint md4_size = 0;
 	uint num_keys = get_global_size(0);
-	uint i;
+	uchar activeRangePos[3], rangeNumChars[3];
+	uint i, j, k, ctr;
 
 	// hash[0] and hash[1] values are sawpped
 	uint hash[4];
 
+	__local uchar ranges[3 * MAX_GPU_CHARS];
 	__local uint sbitmap0[BITMAP_SIZE_1 >> 5];
 	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
 
@@ -240,6 +246,18 @@ __kernel void nt(const __global uint *keys ,
 			cmp_out[i] = 0;
 			outKeyIdx[2 * i] = outKeyIdx[2 * i + 1] = 0;
 		}
+
+	for(i = 0; i < 3; i++) {
+		activeRangePos[i] = msk_ctx[0].activeRangePos[i];
+	}
+
+	for(i = 0; i < 3; i++)
+		rangeNumChars[i] = msk_ctx[0].ranges[activeRangePos[i]].count;
+
+	// Parallel load , works only if LWS is 64
+	ranges[lid] = msk_ctx[0].ranges[activeRangePos[0]].chars[lid];
+	ranges[lid + MAX_GPU_CHARS] = msk_ctx[0].ranges[activeRangePos[1]].chars[lid];
+	ranges[lid + 2 * MAX_GPU_CHARS] = msk_ctx[0].ranges[activeRangePos[2]].chars[lid];
 
 	for(i = 0; i < ((BITMAP_SIZE_1 >> 5) / LWS); i++)
 		sbitmap0[i*LWS + lid] = bitmap[0].bitmap0[i*LWS + lid];
@@ -251,7 +269,30 @@ __kernel void nt(const __global uint *keys ,
 	barrier(CLK_LOCAL_MEM_FENCE);
 
 	coalasced_load(nt_buffer, keys, &md4_size, gid, num_keys);
-	nt_crypt(hash, nt_buffer, md4_size);
-	cmp(output, loaded_hashes, sbitmap0, sbitmap1, hash, cmp_out, outKeyIdx, gid);
+
+	ctr = i = j = k = 0;
+	if (rangeNumChars[2]) PUTCHAR(nt_buffer, activeRangePos[2], ranges[2 * MAX_GPU_CHARS]);
+	if (rangeNumChars[1]) PUTCHAR(nt_buffer, activeRangePos[1], ranges[MAX_GPU_CHARS]);
+
+	do {
+		do {
+			for (i = 0; i < rangeNumChars[0]; i++) {
+				PUTCHAR(nt_buffer, activeRangePos[0], ranges[i]);
+				nt_crypt(hash, nt_buffer, md4_size);
+				cmp(output, loaded_hashes, sbitmap0, sbitmap1, hash, cmp_out, outKeyIdx, gid, ctr++);
+			}
+
+			j++;
+			PUTCHAR(nt_buffer, activeRangePos[1], ranges[j + MAX_GPU_CHARS]);
+
+		} while ( j < rangeNumChars[1]);
+
+		k++;
+		PUTCHAR(nt_buffer, activeRangePos[2], ranges[k + 2 * MAX_GPU_CHARS]);
+
+		PUTCHAR(nt_buffer, activeRangePos[1], ranges[MAX_GPU_CHARS]);
+		j = 0;
+
+	} while( k < rangeNumChars[2]);
 
 }
