@@ -18,6 +18,7 @@
 #include "common-opencl.h"
 #include "config.h"
 #include "options.h"
+#include "loader.h"
 #include "opencl_rawmd4_fmt.h"
 
 #define PLAINTEXT_LENGTH    55 /* Max. is 55 with current kernel */
@@ -40,12 +41,15 @@
 cl_command_queue queue_prof;
 cl_mem pinned_saved_keys, pinned_saved_idx, pinned_partial_hashes;
 cl_mem buffer_keys, buffer_idx, buffer_out, buffer_ld_hashes, buffer_outKeyIdx;
+cl_mem buffer_mask_gpu;
 cl_kernel crk_kernel;
 static cl_uint *partial_hashes;
 static cl_uint *res_hashes;
 static unsigned int *saved_plain, *saved_idx, *loaded_hashes, cmp_out = 0, *outKeyIdx;
 static unsigned int key_idx = 0, loaded_count = 0;
 static unsigned int benchmark = 1; //Used as a flag
+static struct mask_context msk_ctx;
+static struct db_main *DB;
 
 static struct bitmap_ctx bitmap;
 cl_mem buffer_bitmap;
@@ -312,12 +316,12 @@ static void opencl_md4_reset(struct db_main *db) {
 
 	buffer_ld_hashes = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, ((db->password_count) * 4 + 1)*sizeof(int), NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating buffer arg loaded_hashes\n");
-
 	buffer_outKeyIdx = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, (db->password_count) * sizeof(unsigned int) * 2, NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating buffer cmp_out\n");
-
 	buffer_bitmap = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, sizeof(struct bitmap_ctx), NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating buffer arg loaded_hashes\n");
+	buffer_mask_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_ONLY, sizeof(struct mask_context) , NULL, &ret_code);
+	HANDLE_CLERROR(ret_code, "Error creating buffer mask gpu\n");
 
 	argIndex = 0;
 
@@ -333,6 +337,10 @@ static void opencl_md4_reset(struct db_main *db) {
 		"Error setting argument 4");
 	HANDLE_CLERROR(clSetKernelArg(crk_kernel, argIndex++, sizeof(buffer_bitmap), (void*) &buffer_bitmap ),
 		"Error setting argument 5");
+	HANDLE_CLERROR(clSetKernelArg(crk_kernel, argIndex++, sizeof(buffer_mask_gpu), (void*) &buffer_mask_gpu),
+		"Error setting argument 6");
+
+	db -> max_int_keys = 26 * 26 * 10;
 
 	benchmark = 0;
 
@@ -347,6 +355,8 @@ static void opencl_md4_reset(struct db_main *db) {
 	db->format->methods.crypt_all = crypt_all;
 	db->format->methods.get_key = get_key;
 	db->format->params.min_keys_per_crypt = local_work_size;
+
+	DB = db;
 
 	}
 }
@@ -391,6 +401,98 @@ static void load_bitmap(unsigned int num_loaded_hashes, unsigned int index, unsi
 	}
 }
 
+
+static void check_mask_md4(struct mask_context *msk_ctx) {
+	int i, j, k ;
+
+	if(msk_ctx -> count > PLAINTEXT_LENGTH) msk_ctx -> count = PLAINTEXT_LENGTH;
+	if(msk_ctx -> count > MASK_RANGES_MAX) {
+		fprintf(stderr, "MASK parameters are too small...Exiting...\n");
+		exit(EXIT_FAILURE);
+
+	}
+
+  /* Assumes msk_ctx -> activeRangePos[] is sorted. Check if any range exceeds nt key limit */
+	for( i = 0; i < msk_ctx->count; i++)
+		if(msk_ctx -> activeRangePos[i] >= PLAINTEXT_LENGTH) {
+			msk_ctx->count = i;
+			break;
+		}
+	j = 0;
+	i = 0;
+	k = 0;
+ /* Append non-active portion to activeRangePos[] for ease of computation inside GPU */
+	while((j <= msk_ctx -> activeRangePos[k]) && (k < msk_ctx -> count)) {
+		if(j == msk_ctx -> activeRangePos[k]) {
+			k++;
+			j++;
+			continue;
+		}
+		msk_ctx -> activeRangePos[msk_ctx -> count + i] = j;
+		i++;
+		j++;
+	}
+	while ((i+msk_ctx->count) < MASK_RANGES_MAX) {
+		msk_ctx -> activeRangePos[msk_ctx -> count + i] = j;
+		i++;
+		j++;
+	}
+
+	for(i = msk_ctx->count; i < MASK_RANGES_MAX; i++)
+		msk_ctx->ranges[msk_ctx -> activeRangePos[i]].count = 0;
+
+	/* Sort active ranges in descending order of charchter count */
+	if(msk_ctx->ranges[msk_ctx -> activeRangePos[0]].count < msk_ctx->ranges[msk_ctx -> activeRangePos[1]].count) {
+		i = msk_ctx -> activeRangePos[1];
+		msk_ctx -> activeRangePos[1] = msk_ctx -> activeRangePos[0];
+		msk_ctx -> activeRangePos[0] = i;
+	}
+
+	if(msk_ctx->ranges[msk_ctx -> activeRangePos[0]].count < msk_ctx->ranges[msk_ctx -> activeRangePos[2]].count) {
+		i = msk_ctx -> activeRangePos[2];
+		msk_ctx -> activeRangePos[2] = msk_ctx -> activeRangePos[0];
+		msk_ctx -> activeRangePos[0] = i;
+	}
+
+	if(msk_ctx->ranges[msk_ctx -> activeRangePos[1]].count < msk_ctx->ranges[msk_ctx -> activeRangePos[2]].count) {
+		i = msk_ctx -> activeRangePos[2];
+		msk_ctx -> activeRangePos[2] = msk_ctx -> activeRangePos[1];
+		msk_ctx -> activeRangePos[1] = i;
+	}
+}
+
+static void load_mask(struct db_main *db) {
+	int i, j;
+
+	if (!db->msk_ctx) {
+		fprintf(stderr, "No given mask.Exiting...\n");
+		exit(EXIT_FAILURE);
+	}
+	memcpy(&msk_ctx, db->msk_ctx, sizeof(struct mask_context));
+	check_mask_md4(&msk_ctx);
+
+	for(i = 0; i < MASK_RANGES_MAX; i++)
+	    printf("%d ",msk_ctx.activeRangePos[i]);
+	printf("\n");
+	for(i = 0; i < MASK_RANGES_MAX; i++)
+	    printf("%d ",msk_ctx.ranges[msk_ctx.activeRangePos[i]].count);
+	printf("\n");
+
+	/*
+	for(i = 0; i < msk_ctx.count; i++)
+	  printf(" %d ", msk_ctx.activeRangePos[i]);*/
+	for(i = 0; i < msk_ctx.count; i++){
+			for(j = 0; j < msk_ctx.ranges[msk_ctx.activeRangePos[i]].count; j++)
+				printf("%c ",msk_ctx.ranges[msk_ctx.activeRangePos[i]].chars[j]);
+			printf("\n");
+			//checkRange(&msk_ctx, msk_ctx.activeRangePos[i]) ;
+			printf("START:%c",msk_ctx.ranges[msk_ctx.activeRangePos[i]].start);
+			printf("\n");
+	}
+
+	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], buffer_mask_gpu, CL_TRUE, 0, sizeof(struct mask_context), &msk_ctx, 0, NULL, NULL ), "Failed Copy data to gpu");
+}
+
 static void set_key(char *_key, int index)
 {
 	const ARCH_WORD_32 *key = (ARCH_WORD_32*)_key;
@@ -418,21 +520,47 @@ static char *get_key_self_test(int index)
 	return out;
 }
 
+static void passgen(int ctr, char *key) {
+	int i, j, k;
+
+	i =  ctr % msk_ctx.ranges[msk_ctx.activeRangePos[0]].count;
+	key[msk_ctx.activeRangePos[0]] = msk_ctx.ranges[msk_ctx.activeRangePos[0]].chars[i];
+
+	if (msk_ctx.ranges[msk_ctx.activeRangePos[1]].count) {
+		j = (ctr / msk_ctx.ranges[msk_ctx.activeRangePos[0]].count) % msk_ctx.ranges[msk_ctx.activeRangePos[1]].count;
+		key[msk_ctx.activeRangePos[1]] = msk_ctx.ranges[msk_ctx.activeRangePos[1]].chars[j];
+	}
+	if (msk_ctx.ranges[msk_ctx.activeRangePos[2]].count) {
+		k = (ctr / (msk_ctx.ranges[msk_ctx.activeRangePos[0]].count * msk_ctx.ranges[msk_ctx.activeRangePos[1]].count)) % msk_ctx.ranges[msk_ctx.activeRangePos[2]].count;
+		key[msk_ctx.activeRangePos[2]] = msk_ctx.ranges[msk_ctx.activeRangePos[2]].chars[k];
+	}
+}
+
 static char *get_key(int index)
 {
 	static char out[PLAINTEXT_LENGTH + 1];
 	char *key;
 	int i, len;
+	int ctr = 0;
 
-	if(index < loaded_count)
-	index = outKeyIdx[index];
+	if(index < loaded_count) {
+		ctr = outKeyIdx[index + loaded_count];
+		/* outKeyIdx contains all zero when no new passwords are cracked.
+		 * Hence during status checks even if index is less than loaded count
+		 * correct range of passwords is displayed.
+		 */
+		index = outKeyIdx[index];
+	}
 
 	len = saved_idx[index] & 63;
 	key = (char*)&saved_plain[saved_idx[index] >> 6];
 
 	for (i = 0; i < len; i++)
 		out[i] = *key++;
+
+	passgen(ctr, out);
 	out[i] = 0;
+
 	return out;
 }
 
@@ -476,9 +604,21 @@ static int crypt_all_self_test(int *pcount, struct db_salt *salt)
 
 static int crypt_all(int *pcount, struct db_salt *salt)
 {
-	int count = *pcount, i;
+	int count = *pcount, i, multiplier;
+	static unsigned int flag;
 
 	global_work_size = (count + local_work_size - 1) / local_work_size * local_work_size;
+
+
+
+	if(!flag) {
+		load_mask(DB);
+		multiplier = 1;
+		for (i = 0; i < msk_ctx.count; i++)
+			multiplier *= msk_ctx.ranges[msk_ctx.activeRangePos[i]].count;
+		fprintf(stderr, "Multiply the end c/s with:%d\n", multiplier);
+		flag = 1;
+	}
 
 	if(loaded_count != (salt->count)) {
 		load_hash(salt);

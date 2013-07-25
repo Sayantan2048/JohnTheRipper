@@ -15,6 +15,7 @@
 
 #include "opencl_device_info.h"
 #include "opencl_rawmd4_fmt.h"
+#include "opencl_shared_mask.h"
 
 #define BITMAP_HASH_0 	    (BITMAP_SIZE_0 - 1)
 #define BITMAP_HASH_1	    (BITMAP_SIZE_1 - 1)
@@ -121,7 +122,8 @@ void cmp(__global uint *hashes,
 	  __private uint *hash,
 	  __global uint *outKeyIdx,
 	  uint gid,
-	  uint num_loaded_hashes) {
+	  uint num_loaded_hashes,
+	  uint keyIdx) {
 
 	uint loaded_hash, i, tmp;
 
@@ -151,6 +153,7 @@ void cmp(__global uint *hashes,
 						hashes[2 * num_loaded_hashes + i] = hash[2];
 						hashes[3 * num_loaded_hashes + i] = hash[3];
 						outKeyIdx[i] = gid ;
+						outKeyIdx[i + num_loaded_hashes] = keyIdx;
 					}
 				}
 			}
@@ -181,23 +184,43 @@ __kernel void md4_self_test(__global const uint *keys, __global const uint *inde
 	hashes[3 * num_keys + gid] = hash[3] + 0x10325476;
 }
 
-__kernel void md4(__global const uint *keys, __global const uint *index, __global uint *hashes,__global uint *loaded_hashes, __global uint *outKeyIdx, __global struct bitmap_ctx *bitmap)
+__kernel void md4(__global const uint *keys,
+		  __global const uint *index,
+		  __global uint *hashes,
+		  __global uint *loaded_hashes,
+		  __global uint *outKeyIdx,
+		  __global struct bitmap_ctx *bitmap,
+		  __global struct mask_context *msk_ctx	)
 {
 	uint gid = get_global_id(0), lid = get_local_id(0);
 	uint W[16] = { 0 };
-	uint i;
 	uint num_keys = get_global_size(0);
 	uint base = index[gid];
 	uint len = base & 63;
 	uint hash[4];
 	uint num_loaded_hashes = loaded_hashes[0];
+	uchar activeRangePos[3], rangeNumChars[3];
+	uint i, j, k, ctr;
 
+	__local uchar ranges[3 * MAX_GPU_CHARS];
 	__local uint sbitmap0[BITMAP_SIZE_1 >> 5];
 	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
 
 	if(!gid)
 		for (i = 0; i < num_loaded_hashes; i++)
 			outKeyIdx[i] = outKeyIdx[i + num_loaded_hashes] = 0;
+
+	for(i = 0; i < 3; i++) {
+		activeRangePos[i] = msk_ctx[0].activeRangePos[i];
+	}
+
+	for(i = 0; i < 3; i++)
+		rangeNumChars[i] = msk_ctx[0].ranges[activeRangePos[i]].count;
+
+	// Parallel load , works only if LWS is 64
+	ranges[lid] = msk_ctx[0].ranges[activeRangePos[0]].chars[lid];
+	ranges[lid + MAX_GPU_CHARS] = msk_ctx[0].ranges[activeRangePos[1]].chars[lid];
+	ranges[lid + 2 * MAX_GPU_CHARS] = msk_ctx[0].ranges[activeRangePos[2]].chars[lid];
 
 	for(i = 0; i < ((BITMAP_SIZE_1 >> 5) / LWS); i++)
 		sbitmap0[i*LWS + lid] = bitmap[0].bitmap0[i*LWS + lid];
@@ -212,7 +235,30 @@ __kernel void md4(__global const uint *keys, __global const uint *index, __globa
 
 	barrier(CLK_LOCAL_MEM_FENCE);
 
-	md4_encrypt(hash, W, len);
-	cmp(hashes, loaded_hashes, sbitmap0, sbitmap1, hash, outKeyIdx, gid, num_loaded_hashes);
+	ctr = i = j = k = 0;
+	if (rangeNumChars[2]) PUTCHAR(W, activeRangePos[2], ranges[2 * MAX_GPU_CHARS]);
+	if (rangeNumChars[1]) PUTCHAR(W, activeRangePos[1], ranges[MAX_GPU_CHARS]);
+
+
+	do {
+		do {
+			for (i = 0; i < rangeNumChars[0]; i++) {
+				PUTCHAR(W, activeRangePos[0], ranges[i]);
+				md4_encrypt(hash, W, len);
+				cmp(hashes, loaded_hashes, sbitmap0, sbitmap1, hash, outKeyIdx, gid, num_loaded_hashes, ctr++);
+			}
+
+			j++;
+			PUTCHAR(W, activeRangePos[1], ranges[j + MAX_GPU_CHARS]);
+
+		} while ( j < rangeNumChars[1]);
+
+		k++;
+		PUTCHAR(W, activeRangePos[2], ranges[k + 2 * MAX_GPU_CHARS]);
+
+		PUTCHAR(W, activeRangePos[1], ranges[MAX_GPU_CHARS]);
+		j = 0;
+
+	} while( k < rangeNumChars[2]);
 
 }
