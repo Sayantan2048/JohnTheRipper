@@ -610,8 +610,6 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 
 	global_work_size = (count + local_work_size - 1) / local_work_size * local_work_size;
 
-
-
 	if(!flag) {
 		load_mask(DB);
 		multiplier = 1;

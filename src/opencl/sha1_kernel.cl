@@ -15,6 +15,7 @@
 
 #include "opencl_device_info.h"
 #include "opencl_rawsha1_fmt.h"
+#include "opencl_shared_mask.h"
 
 #define BITMAP_HASH_0 	    (BITMAP_SIZE_0 - 1)
 #define BITMAP_HASH_1	    (BITMAP_SIZE_1 - 1)
@@ -355,7 +356,8 @@ void cmp(__global uint *hashes,
 	  __private uint *hash,
 	  __global uint *outKeyIdx,
 	  uint gid,
-	  uint num_loaded_hashes) {
+	  uint num_loaded_hashes,
+	  uint keyIdx) {
 
 	uint loaded_hash, i, tmp;
 
@@ -375,18 +377,24 @@ void cmp(__global uint *hashes,
 			tmp &= (bitmap1[loaded_hash >> 5] >> (loaded_hash & 31)) & 1U;
 			if(tmp) {
 
-				loaded_hash = loaded_hashes[i * 4 + 3];
+				loaded_hash = loaded_hashes[i * 5 + 3];
 				if(hash[2] == loaded_hash) {
 
-					loaded_hash = loaded_hashes[i * 4 + 4];
+					loaded_hash = loaded_hashes[i * 5 + 4];
 					if(hash[3] == loaded_hash) {
 
-						hashes[i] = hash[0];
-						hashes[1 * num_loaded_hashes + i] = hash[1];
-						hashes[2 * num_loaded_hashes + i] = hash[2];
-						hashes[3 * num_loaded_hashes + i] = hash[3];
-						hashes[4 * num_loaded_hashes + i] = hash[4];
-						outKeyIdx[i] = gid ;
+						loaded_hash = loaded_hashes[i * 5 + 5];
+						if(hash[4] == loaded_hash) {
+
+							hashes[i] = hash[0];
+							hashes[1 * num_loaded_hashes + i] = hash[1];
+							hashes[2 * num_loaded_hashes + i] = hash[2];
+							hashes[3 * num_loaded_hashes + i] = hash[3];
+							hashes[4 * num_loaded_hashes + i] = hash[4];
+							outKeyIdx[i] = gid ;
+							outKeyIdx[i + num_loaded_hashes] = keyIdx;
+
+						}
 					}
 				}
 			}
@@ -422,24 +430,45 @@ __kernel void sha1_self_test(__global uint* keys, __global const uint *index, __
 	digest[gid + 4 * num_keys] = SWAP32(output[4]);
 }
 
-__kernel void sha1_crypt_kernel(__global uint* keys, __global const uint *index, __global uint* digest, __global uint *loaded_hashes, __global uint *outKeyIdx, __global struct bitmap_ctx *bitmap)
+__kernel void sha1_crypt_kernel(__global uint* keys,
+				__global const uint *index,
+				__global uint* digest,
+				__global uint *loaded_hashes,
+				__global uint *outKeyIdx,
+				__global struct bitmap_ctx *bitmap,
+				__global struct mask_context *msk_ctx )
 {
 	uint W[16] = { 0 }, output[5];
+	uint restore[16] = { 0 };
 	uint temp, A, B, C, D, E;
 	uint gid = get_global_id(0);
 	uint num_keys = get_global_size(0);
 	uint lid = get_local_id(0);
 	uint base = index[gid];
 	uint len = base & 63;
-	uint i;
 	uint num_loaded_hashes = loaded_hashes[0];
+	uchar activeRangePos[3], rangeNumChars[3];
+	uint i, ii, j, k, ctr;
 
+	__local uchar ranges[3 * MAX_GPU_CHARS];
 	__local uint sbitmap0[BITMAP_SIZE_1 >> 5];
 	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
 
 	if(!gid)
 		for (i = 0; i < num_loaded_hashes; i++)
 			outKeyIdx[i] = outKeyIdx[i + num_loaded_hashes] = 0;
+
+	for(i = 0; i < 3; i++) {
+		activeRangePos[i] = msk_ctx[0].activeRangePos[i];
+	}
+
+	for(i = 0; i < 3; i++)
+		rangeNumChars[i] = msk_ctx[0].ranges[activeRangePos[i]].count;
+
+	// Parallel load , works only if LWS is 64
+	ranges[lid] = msk_ctx[0].ranges[activeRangePos[0]].chars[lid];
+	ranges[lid + MAX_GPU_CHARS] = msk_ctx[0].ranges[activeRangePos[1]].chars[lid];
+	ranges[lid + 2 * MAX_GPU_CHARS] = msk_ctx[0].ranges[activeRangePos[2]].chars[lid];
 
 	for(i = 0; i < ((BITMAP_SIZE_1 >> 5) / LWS); i++)
 		sbitmap0[i*LWS + lid] = bitmap[0].bitmap0[i*LWS + lid];
@@ -457,9 +486,35 @@ __kernel void sha1_crypt_kernel(__global uint* keys, __global const uint *index,
 	PUTCHAR_BE(W, len, 0x80);
 	W[15] = len << 3;
 
-	sha1_init(output);
-	sha1_block(W, output);
-	cmp(digest, loaded_hashes, sbitmap0, sbitmap1, output, outKeyIdx, gid, num_loaded_hashes);
+	for(i = 0; i < 16; i++)
+		restore[i] = W[i];
 
+	ctr = i = j = k = 0;
+	if (rangeNumChars[2]) PUTCHAR_BE(restore, activeRangePos[2], ranges[2 * MAX_GPU_CHARS]);
+	if (rangeNumChars[1]) PUTCHAR_BE(restore, activeRangePos[1], ranges[MAX_GPU_CHARS]);
+
+	do {
+		do {
+			for (i = 0; i < rangeNumChars[0]; i++) {
+				for(ii = 0; ii < 16; ii++)
+					W[ii] = restore[ii];
+				PUTCHAR_BE(W, activeRangePos[0], ranges[i]);
+				sha1_init(output);
+				sha1_block(W, output);
+				cmp(digest, loaded_hashes, sbitmap0, sbitmap1, output, outKeyIdx, gid, num_loaded_hashes, ctr++);
+			}
+
+			j++;
+			PUTCHAR_BE(restore, activeRangePos[1], ranges[j + MAX_GPU_CHARS]);
+
+		} while ( j < rangeNumChars[1]);
+
+		k++;
+		PUTCHAR_BE(restore, activeRangePos[2], ranges[k + 2 * MAX_GPU_CHARS]);
+
+		PUTCHAR_BE(restore, activeRangePos[1], ranges[MAX_GPU_CHARS]);
+		j = 0;
+
+	} while( k < rangeNumChars[2]);
 
 }
