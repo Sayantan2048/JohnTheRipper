@@ -195,6 +195,7 @@ extern struct fmt_main fmt_opencl_zip;
 extern struct fmt_main fmt_opencl_blockchain;
 extern struct fmt_main fmt_opencl_keyring;
 extern struct fmt_main fmt_opencl_sevenzip;
+extern struct fmt_main fmt_opencl_mscash;
 #endif
 #ifdef HAVE_CUDA
 extern struct fmt_main fmt_cuda_cryptmd5;
@@ -409,6 +410,7 @@ static void john_register_all(void)
 		   for new --device handling */
 		john_register_one(&fmt_opencl_bf);
 		john_register_one(&fmt_opencl_DES);
+		john_register_one(&fmt_opencl_mscash);
 	}
 #endif
 

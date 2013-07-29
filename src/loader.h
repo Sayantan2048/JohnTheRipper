@@ -133,6 +133,8 @@ struct db_salt {
 /* Number of passwords with this salt */
 	int count;
 
+	int sequential_id;
+
 /* Buffered keys, allocated for "single crack" mode only */
 	struct db_keys *keys;
 };
@@ -250,10 +252,10 @@ struct db_main {
 
 /* Ciphertext format */
 	struct fmt_main *format;
-	
+
 /* Mask for key genration inside the format */
 	struct mask_context *msk_ctx;
-	
+
 };
 
 /* Non-zero while the loader is processing the pot file */
