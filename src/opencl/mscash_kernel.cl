@@ -7,9 +7,12 @@
  */
 
 #include "opencl_mscash.h"
+#include "opencl_shared_mask.h"
 
 #define BITMAP_HASH_0 	    (BITMAP_SIZE_0 - 1)
 #define BITMAP_HASH_1	    (BITMAP_SIZE_1 - 1)
+
+#define PUTCHAR(buf, index, val) (buf)[(index)>>1] = ((buf)[(index)>>1] & ~(0xffU << (((index) & 1) << 4))) + ((val) << (((index) & 1) << 4))
 
 inline void md4_crypt(__private uint *output, __private uint *nt_buffer)
 {
@@ -157,7 +160,8 @@ inline void cmp(__global uint *hashes,
 	  __private uint *hash,
 	  __global uint *outKeyIdx,
 	  uint gid,
-	  uint num_loaded_hashes) {
+	  uint num_loaded_hashes,
+	  uint keyIdx) {
 
 	uint loaded_hash, i, tmp;
 
@@ -182,6 +186,7 @@ inline void cmp(__global uint *hashes,
 						hashes[2 * num_loaded_hashes + i] = hash[2];
 						hashes[3 * num_loaded_hashes + i] = hash[3];
 						outKeyIdx[i] = gid ;
+						outKeyIdx[i + num_loaded_hashes] = keyIdx;
 					}
 				}
 			}
@@ -229,28 +234,45 @@ __kernel void mscash(__global uint *keys,
 		     __global uint *keyIdx,
 		     __global uint *outBuffer,
 		     __global uint *outKeyIdx,
+		     __global struct mask_context *msk_ctx,
 		     __global uint *salt,
 		     __global uint *loaded_hashes,
 		     __global struct bitmap_ctx *bitmap) {
 
-	int gid = get_global_id(0), i;
+	int gid = get_global_id(0);
 	int lid = get_local_id(0);
 	int numkeys = get_global_size(0);
 	uint nt_buffer[16] = { 0 };
+	uint restore[16] = { 0 };
 	uint output[4] = { 0 };
 	uint base = keyIdx[gid];
 	uint passwordlength = base & 63;
 	uint num_loaded_hashes = loaded_hashes[0];
+	uchar activeRangePos[3], rangeNumChars[3];
+	uint i, j, k, ii, ctr;
 
 	keys += base >> 6;
 
 	__local uint login[12];
+	__local uchar ranges[3 * MAX_GPU_CHARS];
 	__local uint sbitmap0[BITMAP_SIZE_1 >> 5];
 	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
 
 	if(!gid)
 		for (i = 0; i < num_loaded_hashes; i++)
 			outKeyIdx[i] = outKeyIdx[i + num_loaded_hashes] = 0;
+
+	for(i = 0; i < 3; i++) {
+		activeRangePos[i] = msk_ctx[0].activeRangePos[i];
+	}
+
+	for(i = 0; i < 3; i++)
+		rangeNumChars[i] = msk_ctx[0].ranges[activeRangePos[i]].count;
+
+	// Parallel load , works only if LWS is 64
+	ranges[lid] = msk_ctx[0].ranges[activeRangePos[0]].chars[lid];
+	ranges[lid + MAX_GPU_CHARS] = msk_ctx[0].ranges[activeRangePos[1]].chars[lid];
+	ranges[lid + 2 * MAX_GPU_CHARS] = msk_ctx[0].ranges[activeRangePos[2]].chars[lid];
 
 	for(i = 0; i < ((BITMAP_SIZE_1 >> 5) / LWS); i++)
 		sbitmap0[i*LWS + lid] = bitmap[0].bitmap0[i*LWS + lid];
@@ -263,15 +285,42 @@ __kernel void mscash(__global uint *keys,
 			login[i] = salt[i];
 	barrier(CLK_LOCAL_MEM_FENCE);
 
-
 	prepare_key(keys, passwordlength, nt_buffer);
-	md4_crypt(output, nt_buffer);
-	nt_buffer[0] = output[0];
-	nt_buffer[1] = output[1];
-	nt_buffer[2] = output[2];
-	nt_buffer[3] = output[3];
-	for(i = 0; i < 12; i++)
-		nt_buffer[i + 4] = login[i];
-	md4_crypt(output, nt_buffer);
-	cmp(outBuffer, loaded_hashes, sbitmap0, sbitmap1, output, outKeyIdx, gid, num_loaded_hashes);
+
+	for (ii = 0; ii < 16; ii++)
+		restore[ii] = nt_buffer[ii];
+
+	ctr = i = j = k = 0;
+	if (rangeNumChars[2]) PUTCHAR(restore, activeRangePos[2], ranges[2 * MAX_GPU_CHARS]);
+	if (rangeNumChars[1]) PUTCHAR(restore, activeRangePos[1], ranges[MAX_GPU_CHARS]);
+
+	do {
+		do {
+			for (i = 0; i < rangeNumChars[0]; i++) {
+				for(ii = 0; ii < 16; ii++)
+					nt_buffer[ii] = restore[ii];
+				PUTCHAR(nt_buffer, activeRangePos[0], ranges[i]);
+				md4_crypt(output, nt_buffer);
+				nt_buffer[0] = output[0];
+				nt_buffer[1] = output[1];
+				nt_buffer[2] = output[2];
+				nt_buffer[3] = output[3];
+				for(ii = 0; ii < 12; ii++)
+					nt_buffer[ii + 4] = login[ii];
+				md4_crypt(output, nt_buffer);
+				cmp(outBuffer, loaded_hashes, sbitmap0, sbitmap1, output, outKeyIdx, gid, num_loaded_hashes, ctr++);
+			}
+
+			j++;
+			PUTCHAR(restore, activeRangePos[1], ranges[j + MAX_GPU_CHARS]);
+
+		} while ( j < rangeNumChars[1]);
+
+		k++;
+		PUTCHAR(restore, activeRangePos[2], ranges[k + 2 * MAX_GPU_CHARS]);
+
+		PUTCHAR(restore, activeRangePos[1], ranges[MAX_GPU_CHARS]);
+		j = 0;
+
+	} while( k < rangeNumChars[2]);
 }
