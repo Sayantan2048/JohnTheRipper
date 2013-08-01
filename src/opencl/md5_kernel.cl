@@ -22,8 +22,6 @@
 #define USE_BITSELECT
 #endif
 
-#define LDS_CACHE_SIZE		64
-
 #define BITMAP_HASH_0 	    (BITMAP_SIZE_0 - 1)
 #define BITMAP_HASH_1	    (BITMAP_SIZE_1 - 1)
 
@@ -50,11 +48,6 @@
 
 /* some constants used below are passed with -D */
 //#define KEY_LENGTH (MD4_PLAINTEXT_LENGTH + 1)
-
-struct return_key {
-	uint key[15];
-	uint length;
-};
 
 /* OpenCL kernel entry point. Copy key to be hashed from
  * global to local (thread) memory. Break the key into 16 32-bit (uint)
@@ -157,13 +150,12 @@ void raw_md5_encrypt(__private uint *W, __private uint4 *hash, int len) {
 	  __local uint *bitmap0,
 	  __local uint *bitmap1,
 	  __private uint4 *hash,
-	  __global uint * cmp_out,
-	  __private uint *keys,
-	  uint len,
-	  __global struct return_key *return_keys, uint gid) {
+	  __global uint * outKeyIdx,
+	  uint num_loaded_hashes,
+	  uint gid,
+	  uint ctr) {
 
 	uint i, j, loaded_hash, tmp;
-	uint num_loaded_hashes = loaded_hashes[0];
 	uint num_keys = get_global_size(0);
 
 	hash[0].s0 += 0x67452301;
@@ -192,11 +184,8 @@ void raw_md5_encrypt(__private uint *W, __private uint4 *hash, int len) {
 						hashes[2 * num_loaded_hashes + i] = hash[0].s2;
 						hashes[3 * num_loaded_hashes + i] = hash[0].s3;
 
-						for (j = 0; j < (len+3)/4; j++)
-							return_keys[i].key[j] = keys[j];
-						return_keys[i].length = len;
-
-						cmp_out[i] = 0xffffffff;
+						outKeyIdx[i] = gid | 0x80000000;
+						outKeyIdx[i + num_loaded_hashes] = ctr;
 					}
 				}
 			}
@@ -230,8 +219,7 @@ __kernel void md5_nnn(__global uint *keys,
 		      __global uint *index,
 		      __global uint *hashes,
 		      __global const uint* loaded_hashes,
-		      __global uint *cmp_out,
-		      __global struct return_key *return_keys,
+		      __global uint *outKeyIdx,
 		      __global struct mask_context *msk_ctx,
 		      __global struct bitmap_ctx *bitmap)
 
@@ -242,17 +230,18 @@ __kernel void md5_nnn(__global uint *keys,
 	uint base = index[gid];
 	uint len = base & 63;
 	uint W[16] = { 0 };
+	uint num_loaded_hashes = loaded_hashes[0];
 	uchar activeRangePos[3], rangeNumChars[3];
 
-	int i, j, k;
+	int i, j, k, ctr;
 
 	__local uchar ranges[4 * MAX_GPU_CHARS];
 	__local uint sbitmap0[BITMAP_SIZE_1 >> 5];
 	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
 
 	if(!gid)
-		for (i = 0; i < loaded_hashes[0]; i++)
-			cmp_out[i] = 0;
+		for (i = 0; i < num_loaded_hashes; i++)
+			outKeyIdx[i] = outKeyIdx[i + num_loaded_hashes] = 0;
 
 	for(i = 0; i < 3; i++) {
 		activeRangePos[i] = msk_ctx[0].activeRangePos[i];
@@ -279,7 +268,7 @@ __kernel void md5_nnn(__global uint *keys,
 	for (i = 0; i < (len+3)/4; i++)
 		W[i] = keys[i];
 
-	i = j = k = 0;
+	ctr = i = j = k = 0;
 	if (rangeNumChars[2]) PUTCHAR(W, activeRangePos[2], ranges[2 * MAX_GPU_CHARS]);
 	if (rangeNumChars[1]) PUTCHAR(W, activeRangePos[1], ranges[MAX_GPU_CHARS]);
 
@@ -288,7 +277,7 @@ __kernel void md5_nnn(__global uint *keys,
 			for (i = 0; i < rangeNumChars[0]; i++) {
 				PUTCHAR(W, activeRangePos[0], ranges[i]);
 				raw_md5_encrypt(W, &hash, len);
-				cmp(hashes, loaded_hashes, sbitmap0, sbitmap1, &hash, cmp_out, W, len, return_keys, gid);
+				cmp(hashes, loaded_hashes, sbitmap0, sbitmap1, &hash, outKeyIdx, num_loaded_hashes, gid, ctr++);
 			}
 
 			j++;
@@ -309,8 +298,7 @@ __kernel void md5_ccc(__global uint *keys,
 		      __global uint *index,
 		      __global uint *hashes,
 		      __global const uint* loaded_hashes,
-		      __global uint *cmp_out,
-		      __global struct return_key *return_keys,
+		      __global uint *outKeyIdx,
 		      __global struct mask_context *msk_ctx,
 		      __global struct bitmap_ctx *bitmap)
 
@@ -321,16 +309,17 @@ __kernel void md5_ccc(__global uint *keys,
 	uint base = index[gid];
 	uint len = base & 63;
 	uint W[16] = { 0 };
+	uint num_loaded_hashes = loaded_hashes[0];
 	uchar activeRangePos[3], rangeNumChars[3], start[3];
 
-	int i, j, k;
+	int i, j, k, ctr;
 
 	__local uint sbitmap0[BITMAP_SIZE_1 >> 5];
 	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
 
 	if(!gid)
-		for (i = 0; i < loaded_hashes[0]; i++)
-			cmp_out[i] = 0;
+		for (i = 0; i < num_loaded_hashes; i++)
+			outKeyIdx[i] = outKeyIdx[i + num_loaded_hashes] = 0;
 
 	for(i = 0; i < 3; i++) {
 		activeRangePos[i] = msk_ctx[0].activeRangePos[i];
@@ -354,7 +343,7 @@ __kernel void md5_ccc(__global uint *keys,
 	for (i = 0; i < (len+3)/4; i++)
 		W[i] = keys[i];
 
-	i = j = k = 0;
+	ctr = i = j = k = 0;
 	if (rangeNumChars[2]) PUTCHAR(W, activeRangePos[2], start[2]);
 	if (rangeNumChars[1]) PUTCHAR(W, activeRangePos[1], start[1]);
 
@@ -363,7 +352,7 @@ __kernel void md5_ccc(__global uint *keys,
 			for (i = 0; i < rangeNumChars[0]; i++) {
 				PUTCHAR(W, activeRangePos[0], (start[0] + i));
 				raw_md5_encrypt(W, &hash, len);
-				cmp(hashes, loaded_hashes, sbitmap0, sbitmap1, &hash, cmp_out, W, len, return_keys, gid);
+				cmp(hashes, loaded_hashes, sbitmap0, sbitmap1, &hash, outKeyIdx, num_loaded_hashes, gid, ctr++);
 			}
 
 			j++;
@@ -384,8 +373,7 @@ __kernel void md5_cnn(__global uint *keys,
 		      __global uint *index,
 		      __global uint *hashes,
 		      __global const uint* loaded_hashes,
-		      __global uint *cmp_out,
-		      __global struct return_key *return_keys,
+		      __global uint *outKeyIdx,
 		      __global struct mask_context *msk_ctx,
 		      __global struct bitmap_ctx *bitmap)
 
@@ -396,17 +384,18 @@ __kernel void md5_cnn(__global uint *keys,
 	uint base = index[gid];
 	uint len = base & 63;
 	uint W[16] = { 0 };
+	uint num_loaded_hashes = loaded_hashes[0];
 	uchar activeRangePos[3], rangeNumChars[3], start;
 
-	int i, j, k;
+	int i, j, k, ctr;
 
 	__local uchar ranges[2 * MAX_GPU_CHARS];
 	__local uint sbitmap0[BITMAP_SIZE_1 >> 5];
 	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
 
 	if(!gid)
-		for (i = 0; i < loaded_hashes[0]; i++)
-			cmp_out[i] = 0;
+		for (i = 0; i < num_loaded_hashes; i++)
+			outKeyIdx[i] = outKeyIdx[i + num_loaded_hashes] = 0;
 
 	for(i = 0; i < 3; i++) {
 		activeRangePos[i] = msk_ctx[0].activeRangePos[i];
@@ -434,7 +423,7 @@ __kernel void md5_cnn(__global uint *keys,
 	for (i = 0; i < (len+3)/4; i++)
 		W[i] = keys[i];
 
-	i = j = k = 0;
+	ctr = i = j = k = 0;
 	if (rangeNumChars[2]) PUTCHAR(W, activeRangePos[2], ranges[MAX_GPU_CHARS]);
 	if (rangeNumChars[1]) PUTCHAR(W, activeRangePos[1], ranges[0]);
 
@@ -443,7 +432,7 @@ __kernel void md5_cnn(__global uint *keys,
 			for (i = 0; i < rangeNumChars[0]; i++) {
 				PUTCHAR(W, activeRangePos[0], (start + i));
 				raw_md5_encrypt(W, &hash, len);
-				cmp(hashes, loaded_hashes, sbitmap0, sbitmap1, &hash, cmp_out, W, len, return_keys, gid);
+				cmp(hashes, loaded_hashes, sbitmap0, sbitmap1, &hash, outKeyIdx, num_loaded_hashes, gid, ctr++);
 			}
 
 			j++;

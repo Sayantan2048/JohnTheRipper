@@ -160,12 +160,11 @@ void cmp(__global uint *hashes,
 	  __local uint *bitmap0,
 	  __local uint *bitmap1,
 	  __private uint *hash,
-	  __global uint *cmp_out,
 	  __global uint *outKeyIdx,
+	  uint num_loaded_hashes,
 	  uint gid,
 	  uint ctr) {
 
-	uint num_loaded_hashes = loaded_hashes[0];
 	uint loaded_hash, i, tmp;
 
 	for(i = 0; i < num_loaded_hashes; i++) {
@@ -188,9 +187,9 @@ void cmp(__global uint *hashes,
 						hashes[1 * num_loaded_hashes + i] = hash[0];
 						hashes[2 * num_loaded_hashes + i] = hash[2];
 						hashes[3 * num_loaded_hashes + i] = hash[3];
-						cmp_out[i] = 0xffffffff;
-						outKeyIdx[2 * i] = gid ;
-						outKeyIdx[2 * i + 1] = ctr;
+
+						outKeyIdx[i] = gid | 0x80000000;
+						outKeyIdx[i + num_loaded_hashes] = ctr;
 					}
 				}
 			}
@@ -221,7 +220,6 @@ __kernel void nt_self_test(const __global uint *keys , __global uint *output)
 __kernel void nt(const __global uint *keys ,
 		       __global uint *output,
 		 const __global uint *loaded_hashes,
-		       __global uint *cmp_out,
 		       __global uint *outKeyIdx,
 		 const __global struct bitmap_ctx *bitmap,
 		 const __global struct mask_context *msk_ctx)
@@ -231,6 +229,7 @@ __kernel void nt(const __global uint *keys ,
 	uint nt_buffer[12] = { 0 };
 	uint md4_size = 0;
 	uint num_keys = get_global_size(0);
+	uint num_loaded_hashes = loaded_hashes[0];
 	uchar activeRangePos[3], rangeNumChars[3];
 	uint i, j, k, ctr;
 
@@ -242,10 +241,8 @@ __kernel void nt(const __global uint *keys ,
 	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
 
 	if(!gid)
-		for (i = 0; i < loaded_hashes[0]; i++) {
-			cmp_out[i] = 0;
-			outKeyIdx[2 * i] = outKeyIdx[2 * i + 1] = 0;
-		}
+		for (i = 0; i < num_loaded_hashes; i++)
+			outKeyIdx[i] = outKeyIdx[i + num_loaded_hashes] = 0;
 
 	for(i = 0; i < 3; i++) {
 		activeRangePos[i] = msk_ctx[0].activeRangePos[i];
@@ -279,7 +276,7 @@ __kernel void nt(const __global uint *keys ,
 			for (i = 0; i < rangeNumChars[0]; i++) {
 				PUTCHAR(nt_buffer, activeRangePos[0], ranges[i]);
 				nt_crypt(hash, nt_buffer, md4_size);
-				cmp(output, loaded_hashes, sbitmap0, sbitmap1, hash, cmp_out, outKeyIdx, gid, ctr++);
+				cmp(output, loaded_hashes, sbitmap0, sbitmap1, hash, outKeyIdx, num_loaded_hashes, gid, ctr++);
 			}
 
 			j++;

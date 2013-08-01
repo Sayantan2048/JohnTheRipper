@@ -546,7 +546,7 @@ static char *get_key(int index)
 		 * Hence during status checks even if index is less than loaded count
 		 * correct range of passwords is displayed.
 		 */
-		index = outKeyIdx[index];
+		index = outKeyIdx[index] & 0x7fffffff;
 	}
 
 	len = saved_idx[index] & 63;
@@ -555,13 +555,12 @@ static char *get_key(int index)
 	for (i = 0; i < len; i++)
 		out[i] = key[i];
 
-	passgen(ctr, out);
+	if(cmp_out)
+		passgen(ctr, out);
 
 	out[i] = 0;
 	return out;
 }
-
-
 
 static void *binary(char *ciphertext)
 {

@@ -153,7 +153,7 @@ void cmp(__global uint *hashes,
 						hashes[1 * num_loaded_hashes + i] = hash[1];
 						hashes[2 * num_loaded_hashes + i] = hash[2];
 						hashes[3 * num_loaded_hashes + i] = hash[3];
-						outKeyIdx[i] = gid ;
+						outKeyIdx[i] = gid | 0x80000000;
 						outKeyIdx[i + num_loaded_hashes] = keyIdx;
 					}
 				}

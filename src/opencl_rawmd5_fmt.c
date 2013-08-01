@@ -38,21 +38,15 @@
 #define FORMAT_TAG          "$dynamic_0$"
 #define TAG_LENGTH          (sizeof(FORMAT_TAG) - 1)
 
-struct return_key {
-	char key[PLAINTEXT_LENGTH + 5];
-	unsigned int length;
-};
-
 cl_mem pinned_saved_keys, pinned_saved_idx, pinned_partial_hashes;
-cl_mem buffer_keys, buffer_idx, buffer_out, buffer_ld_hashes, buffer_cmp_out, buffer_return_keys, buffer_mask_gpu;
+cl_mem buffer_keys, buffer_idx, buffer_out, buffer_ld_hashes, buffer_outKeyIdx, buffer_mask_gpu;
 cl_kernel crk_kernel_nnn, crk_kernel_ccc, crk_kernel_cnn, crk_kernel;
 static cl_uint *partial_hashes;
 static cl_uint *res_hashes ;
-static unsigned int *saved_plain, *saved_idx, *loaded_hashes, *cmp_out;
+static unsigned int *saved_plain, *saved_idx, *loaded_hashes, cmp_out, *outKeyIdx;
 static int benchmark = 1; // used as a flag
 static unsigned int key_idx = 0;
 static int loaded_count;
-static struct return_key *return_keys;
 static struct mask_context msk_ctx;
 static struct db_main *DB;
 
@@ -148,13 +142,15 @@ static void release_clobj(void)
 static void done(void)
 {
 	release_clobj();
-	HANDLE_CLERROR(clReleaseMemObject(buffer_cmp_out), "Error Releasing cmp_out");
-	HANDLE_CLERROR(clReleaseMemObject(buffer_ld_hashes), "Error Releasing loaded hashes");
-	HANDLE_CLERROR(clReleaseMemObject(buffer_return_keys), "Error Releasing return keys");
+	if(!benchmark) {
+		HANDLE_CLERROR(clReleaseMemObject(buffer_outKeyIdx), "Error Releasing cmp_out");
+		HANDLE_CLERROR(clReleaseMemObject(buffer_ld_hashes), "Error Releasing loaded hashes");
+		HANDLE_CLERROR(clReleaseMemObject(buffer_bitmap), "Error Releasing loaded hashes");
+		HANDLE_CLERROR(clReleaseMemObject(buffer_mask_gpu), "Error Releasing loaded hashes");
 
-	MEM_FREE(cmp_out);
-	MEM_FREE(loaded_hashes);
-	MEM_FREE(return_keys);
+		MEM_FREE(outKeyIdx);
+		MEM_FREE(loaded_hashes);
+	}
 
 	HANDLE_CLERROR(clReleaseKernel(crypt_kernel), "Release self_test kernel");
 	HANDLE_CLERROR(clReleaseKernel(crk_kernel_nnn), "Release cracking kernel");
@@ -319,10 +315,9 @@ static void setKernelArgs(cl_kernel *kernel) {
 	HANDLE_CLERROR(clSetKernelArg(*kernel, 1, sizeof(buffer_idx), &buffer_idx), "Error setting argument 2");
 	HANDLE_CLERROR(clSetKernelArg(*kernel, 2, sizeof(buffer_out), &buffer_out), "Error setting argument 3");
 	HANDLE_CLERROR(clSetKernelArg(*kernel, 3, sizeof(buffer_ld_hashes), &buffer_ld_hashes), "Error setting argument 4");
-	HANDLE_CLERROR(clSetKernelArg(*kernel, 4, sizeof(buffer_cmp_out), &buffer_cmp_out), "Error setting argument 5");
-	HANDLE_CLERROR(clSetKernelArg(*kernel, 5, sizeof(buffer_return_keys), &buffer_return_keys), "Error setting argument 6");
-	HANDLE_CLERROR(clSetKernelArg(*kernel, 6, sizeof(buffer_mask_gpu), &buffer_mask_gpu), "Error setting argument 7");
-	HANDLE_CLERROR(clSetKernelArg(*kernel, 7, sizeof(buffer_bitmap), &buffer_bitmap), "Error setting argument 8");
+	HANDLE_CLERROR(clSetKernelArg(*kernel, 4, sizeof(buffer_outKeyIdx), &buffer_outKeyIdx), "Error setting argument 5");
+	HANDLE_CLERROR(clSetKernelArg(*kernel, 5, sizeof(buffer_mask_gpu), &buffer_mask_gpu), "Error setting argument 7");
+	HANDLE_CLERROR(clSetKernelArg(*kernel, 6, sizeof(buffer_bitmap), &buffer_bitmap), "Error setting argument 8");
 }
 
 static void opencl_md5_reset(struct db_main *db) {
@@ -331,8 +326,7 @@ static void opencl_md5_reset(struct db_main *db) {
 	if(db) {
 
 	loaded_hashes = (unsigned int*)mem_alloc(((db->password_count) * 4 + 1)*sizeof(unsigned int));
-	cmp_out	      = (unsigned int*)mem_alloc((db->password_count) *sizeof(unsigned int));
-	return_keys   = (struct return_key*)mem_calloc((db->password_count) *sizeof(struct return_key));
+	outKeyIdx	      = (unsigned int*)mem_alloc((db->password_count) * sizeof(unsigned int) * 2);
 
 	buffer_ld_hashes = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, ((db->password_count) * 4 + 1)*sizeof(int), NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating buffer arg loaded_hashes\n");
@@ -340,11 +334,8 @@ static void opencl_md5_reset(struct db_main *db) {
 	buffer_bitmap = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, sizeof(struct bitmap_ctx), NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating buffer arg loaded_hashes\n");
 
-	buffer_cmp_out = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, (db->password_count) *sizeof(unsigned int), NULL, &ret_code);
+	buffer_outKeyIdx = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_WRITE, (db->password_count) * sizeof(unsigned int) * 2, NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating buffer cmp_out\n");
-
-	buffer_return_keys = clCreateBuffer(context[ocl_gpu_id], CL_MEM_WRITE_ONLY, (db->password_count) *sizeof(struct return_key), NULL, &ret_code);
-	HANDLE_CLERROR(ret_code, "Error creating buffer return_keys\n");
 
 	buffer_mask_gpu = clCreateBuffer(context[ocl_gpu_id], CL_MEM_READ_ONLY, sizeof(struct mask_context) , NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating buffer mask gpu\n");
@@ -586,16 +577,48 @@ static char *get_key_self_test(int index)
 	return out;
 }
 
+static void passgen(int ctr, char *key) {
+	int i, j, k;
+
+	i =  ctr % msk_ctx.ranges[msk_ctx.activeRangePos[0]].count;
+	key[msk_ctx.activeRangePos[0]] = msk_ctx.ranges[msk_ctx.activeRangePos[0]].chars[i];
+
+	if (msk_ctx.ranges[msk_ctx.activeRangePos[1]].count) {
+		j = (ctr / msk_ctx.ranges[msk_ctx.activeRangePos[0]].count) % msk_ctx.ranges[msk_ctx.activeRangePos[1]].count;
+		key[msk_ctx.activeRangePos[1]] = msk_ctx.ranges[msk_ctx.activeRangePos[1]].chars[j];
+	}
+	if (msk_ctx.ranges[msk_ctx.activeRangePos[2]].count) {
+		k = (ctr / (msk_ctx.ranges[msk_ctx.activeRangePos[0]].count * msk_ctx.ranges[msk_ctx.activeRangePos[1]].count)) % msk_ctx.ranges[msk_ctx.activeRangePos[2]].count;
+		key[msk_ctx.activeRangePos[2]] = msk_ctx.ranges[msk_ctx.activeRangePos[2]].chars[k];
+	}
+}
+
 static char *get_key(int index)
 {
 	static char out[PLAINTEXT_LENGTH + 1];
 	int i;
-	if(index >= loaded_count) return "CHECK";
-	// Potential segfault if removed
-	index = (index < loaded_count) ? index: (loaded_count -1);
-	for (i = 0; i < return_keys[index].length; i++)
-		out[i] = return_keys[index].key[i];
+	int  len, ctr = 0;
+	char *key;
+
+	if(index < loaded_count) {
+		ctr = outKeyIdx[index + loaded_count];
+		/* outKeyIdx contains all zero when no new passwords are cracked.
+		 * Hence during status checks even if index is less than loaded count
+		 * correct range of passwords is displayed.
+		 */
+		index = outKeyIdx[index] & 0x7fffffff;
+	}
+	len = saved_idx[index] & 63;
+	key = (char*)&saved_plain[saved_idx[index] >> 6];
+
+	for (i = 0; i < len; i++)
+		out[i] = *key++;
+
+	if(cmp_out)
+		passgen(ctr, out);
+
 	out[i] = 0;
+
 	return out;
 }
 
@@ -672,18 +695,20 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 	HANDLE_CLERROR(clWaitForEvents(1, &evnt), "Wait for event failed");
 
 	// read back compare results
-	HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], buffer_cmp_out, CL_TRUE, 0, sizeof(cl_uint) * loaded_count, cmp_out, 0, NULL, NULL), "failed in reading cmp data back");
+	HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], buffer_outKeyIdx, CL_TRUE, 0, sizeof(cl_uint) * loaded_count, outKeyIdx, 0, NULL, NULL), "failed in reading cmp data back");
 
-	// If a positive match is found cmp_out[i] contains 0xffffffff else contains 0
-	for(i = 1; i < (loaded_count & (~cmp_out[0])); i++)
-		cmp_out[0] |= cmp_out[i];
+	cmp_out = 0;
+
+	// If a positive match is found outKeyIdx[i] contains 0xffffffff else contains 0
+	for(i = 0; i < (loaded_count & (~cmp_out)); i++)
+		cmp_out = outKeyIdx[i]?0xffffffff:0;
 
 	have_full_hashes = 0;
 
 	// If any positive match is found
-	if(cmp_out[0]) {
+	if(cmp_out) {
 		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], buffer_out, CL_TRUE, 0, sizeof(cl_uint) * loaded_count, partial_hashes, 0, NULL, NULL), "failed in reading hashes back");
-		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], buffer_return_keys, CL_TRUE, 0, sizeof(struct return_key) * loaded_count, return_keys, 0, NULL, NULL), "failed in reading keys back");
+		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], buffer_outKeyIdx, CL_TRUE, 0, sizeof(cl_uint) * loaded_count * 2, outKeyIdx, 0, NULL, NULL), "failed in reading cmp data back");
 		HANDLE_CLERROR(clFinish(queue[ocl_gpu_id]), "cl finish failed");
 		return loaded_count;
 	}
