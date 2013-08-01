@@ -454,10 +454,6 @@ __kernel void sha1_crypt_kernel(__global uint* keys,
 	__local uint sbitmap0[BITMAP_SIZE_1 >> 5];
 	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
 
-	if(!gid)
-		for (i = 0; i < num_loaded_hashes; i++)
-			outKeyIdx[i] = outKeyIdx[i + num_loaded_hashes] = 0;
-
 	for(i = 0; i < 3; i++) {
 		activeRangePos[i] = msk_ctx[0].activeRangePos[i];
 	}
@@ -476,12 +472,25 @@ __kernel void sha1_crypt_kernel(__global uint* keys,
 	for(i = 0; i < ((BITMAP_SIZE_1 >> 5)/ LWS); i++)
 		sbitmap1[i*LWS + lid] = bitmap[0].bitmap1[i*LWS + lid];
 
+	barrier(CLK_LOCAL_MEM_FENCE);
+
+	if(msk_ctx[0].flg_wrd) {
+		ii = outKeyIdx[gid>>2];
+		ii = (ii >> ((gid&3) << 3))&0xFF;
+		for(i = 0; i < 3; i++)
+			activeRangePos[i] += ii;
+		barrier(CLK_GLOBAL_MEM_FENCE);
+	}
+
+	if(gid==1)
+		for (i = 0; i < num_loaded_hashes; i++)
+			outKeyIdx[i] = outKeyIdx[i + num_loaded_hashes] = 0;
+	barrier(CLK_GLOBAL_MEM_FENCE);
+
 	keys += base >> 6;
 
 	for (i = 0; i < (len+3)/4; i++)
 		W[i] = SWAP32(*keys++);
-
-	barrier(CLK_LOCAL_MEM_FENCE);
 
 	PUTCHAR_BE(W, len, 0x80);
 	W[15] = len << 3;
