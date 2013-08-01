@@ -90,9 +90,9 @@ extern int rpp_init(struct rpp_context *ctx, char *subsection);
 extern void rpp_init_mask(struct rpp_context *ctx, char *mask);
 
 /*
- *  Process a mask or rule 
+ *  Process a mask or rule
  */
-extern void rpp_process_rule(struct rpp_context *ctx); 
+extern void rpp_process_rule(struct rpp_context *ctx);
 
 /*
  * Returns a preprocessed rule and moves to the next one.
@@ -101,9 +101,9 @@ extern char *rpp_next(struct rpp_context *ctx);
 
 /*
  *  Returns a password generated using the mask on host which serves
- *  as a base password for furthur generation of password inside the 
+ *  as a base password for furthur generation of password inside the
  *  format and moves to next one.
  */
-extern char *msk_next(struct rpp_context *, struct mask_context *);
+extern char *msk_next(struct rpp_context *, struct mask_context *, int *flag);
 
 #endif

@@ -39,6 +39,9 @@ struct mask_context {
 
   /* Number of postions for overwriting in the format */
 	int count;
+
+  /* Wordlist mode flag, set to 1 when used with wordlist else set to 0 */
+	unsigned char flg_wrd;
 };
 
 #endif

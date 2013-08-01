@@ -60,7 +60,7 @@ static struct opt_entry opt_list[] = {
 	{"", FLG_PASSWD, 0, 0, 0, OPT_FMT_ADD_LIST, &options.passwd},
 	{"single", FLG_SINGLE_SET, FLG_CRACKING_CHK, 0, 0,
 		OPT_FMT_STR_ALLOC, &options.loader.activesinglerules},
-	{"wordlist", FLG_WORDLIST_SET, FLG_CRACKING_CHK,
+	{"wordlist", FLG_WORDLIST_SET, FLG_WORDLIST_CHK,
 		0, 0, OPT_FMT_STR_ALLOC, &options.wordlist},
 	{"loopback", FLG_LOOPBACK_SET, FLG_CRACKING_CHK,
 		0, 0, OPT_FMT_STR_ALLOC, &options.wordlist},
@@ -75,7 +75,7 @@ static struct opt_entry opt_list[] = {
 #endif
 	{"rules", FLG_RULES, FLG_RULES, FLG_WORDLIST_CHK, FLG_STDIN_CHK,
 		OPT_FMT_STR_ALLOC, &options.loader.activewordlistrules},
-	{"mask", FLG_MASK_SET, FLG_CRACKING_CHK,
+	{"mask", FLG_MASK_SET, FLG_MASK_CHK,
 		0, OPT_REQ_PARAM, OPT_FMT_STR_ALLOC, &options.mask},
 	{"incremental", FLG_INC_SET, FLG_CRACKING_CHK,
 		0, 0, OPT_FMT_STR_ALLOC, &options.charset},

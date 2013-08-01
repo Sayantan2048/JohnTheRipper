@@ -28,9 +28,11 @@
  */
 struct db_main;
 
+extern unsigned char *mask_offset_buffer;
+
 /*
  * Runs the mask mode cracker.
  */
-extern void do_mask_crack(struct db_main *db, char *mask);
+extern void do_mask_crack(struct db_main *db, char *mask, char *wordlist);
 
 #endif

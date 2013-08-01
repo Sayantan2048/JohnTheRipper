@@ -196,19 +196,19 @@ char *rpp_next(struct rpp_context *ctx)
 	if (ctx->count < 0) {
 		if (!ctx->input) return NULL;
 		rpp_process_rule(ctx);
-		
+
 	}
 
 	done = 1;
 	if ((index = ctx->count - 1) >= 0) {
-		
+
 		do {
 			range = &ctx->ranges[index];
 			*range->pos = range->chars[range->index];
 		} while (index--);
 
 		index = ctx->count - 1;
-		
+
 		do {
 			range = &ctx->ranges[index];
 			if (range->flag_p > 0)
@@ -251,39 +251,39 @@ char *rpp_next(struct rpp_context *ctx)
 		ctx->input = ctx->input->next;
 		ctx->count = -1;
 	}
-	
+
 	return ctx->output;
 }
 
-char *msk_next(struct rpp_context *rpp_ctx, struct mask_context *msk_ctx)
+char *msk_next(struct rpp_context *rpp_ctx, struct mask_context *msk_ctx, int *flag)
 {
 	struct rpp_range *range;
 	int index, done, i;
-	static int flag, skipcurrentidx = 0x7fffffff, processcurrentidx=0x7fffffff;
+	static int skipcurrentidx = 0x7fffffff, processcurrentidx=0x7fffffff;
 
 	done = 1;
-	if(flag) return NULL;
-	
+	if((*flag)) return NULL;
+
 	if ((index = rpp_ctx->count - 1) >= 0) {
-		
+
 		do {
 			range = &rpp_ctx->ranges[index];
 			*range->pos = range->chars[range->index];
 		} while (index--);
 
 		index = rpp_ctx->count - 1;
-		
-		do {	
+
+		do {
 			if(skipcurrentidx == index) goto next_idx;
 			if(processcurrentidx == index) goto skip_search;
-			for (i = 0; i < msk_ctx -> count; i++) { 
+			for (i = 0; i < msk_ctx -> count; i++) {
 				if(msk_ctx -> activeRangePos[i] == index) {
 					skipcurrentidx = index;
 					goto next_idx;
 				}
 			}
 			processcurrentidx = index;
-skip_search:            ;			
+skip_search:            ;
 			range = &rpp_ctx->ranges[index];
 			if (range->flag_p > 0)
 				continue;
@@ -294,8 +294,8 @@ skip_search:            ;
 					break;
 			}
 			range->index = 0;
-			
-next_idx: 		;	
+
+next_idx: 		;
 		} while (index--);
 		done = index < 0;
 
@@ -304,7 +304,7 @@ next_idx: 		;
 	if (done) {
 		rpp_ctx->input = rpp_ctx->input->next;
 		rpp_ctx->count = -1;
-		flag = 1;
+		*flag = 1;
 	}
 	//printf("%s\n",rpp_ctx->output);
 	return rpp_ctx->output;

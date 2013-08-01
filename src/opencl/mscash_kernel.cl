@@ -185,8 +185,9 @@ inline void cmp(__global uint *hashes,
 						hashes[1 * num_loaded_hashes + i] = hash[1];
 						hashes[2 * num_loaded_hashes + i] = hash[2];
 						hashes[3 * num_loaded_hashes + i] = hash[3];
-						outKeyIdx[i] = gid ;
+						outKeyIdx[i] = gid | 0x80000000;
 						outKeyIdx[i + num_loaded_hashes] = keyIdx;
+						barrier(CLK_GLOBAL_MEM_FENCE);
 					}
 				}
 			}
@@ -258,10 +259,6 @@ __kernel void mscash(__global uint *keys,
 	__local uint sbitmap0[BITMAP_SIZE_1 >> 5];
 	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
 
-	if(!gid)
-		for (i = 0; i < num_loaded_hashes; i++)
-			outKeyIdx[i] = outKeyIdx[i + num_loaded_hashes] = 0;
-
 	for(i = 0; i < 3; i++) {
 		activeRangePos[i] = msk_ctx[0].activeRangePos[i];
 	}
@@ -283,7 +280,21 @@ __kernel void mscash(__global uint *keys,
 	if(!lid)
 		for(i = 0; i < 12; i++)
 			login[i] = salt[i];
+
 	barrier(CLK_LOCAL_MEM_FENCE);
+
+	if(msk_ctx[0].flg_wrd) {
+		ii = outKeyIdx[gid>>2];
+		ii = (ii >> ((gid&3) << 3))&0xFF;
+		for(i = 0; i < 3; i++)
+			activeRangePos[i] += ii;
+		barrier(CLK_GLOBAL_MEM_FENCE);
+	}
+
+	if(gid==1)
+		for (i = 0; i < num_loaded_hashes; i++)
+			outKeyIdx[i] = outKeyIdx[i + num_loaded_hashes] = 0;
+	barrier(CLK_GLOBAL_MEM_FENCE);
 
 	prepare_key(keys, passwordlength, nt_buffer);
 
