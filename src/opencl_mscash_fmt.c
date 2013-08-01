@@ -24,7 +24,7 @@
 #define BUFSIZE            	((PLAINTEXT_LENGTH+3)/4*4)
 
 static unsigned int key_idx = 0;
-static unsigned char *local_mask_buffer;
+static unsigned char *mask_offsets;
 
 static unsigned int *saved_plain, *saved_idx, *outbuffer, *outKeyIdx, *current_salt;
 cl_mem 	pinned_saved_keys, pinned_saved_idx, pinned_saved_salt,
@@ -100,6 +100,7 @@ static void done()
 		MEM_FREE(bitmaps);
 		MEM_FREE(loaded_count);
 		MEM_FREE(outKeyIdx);
+		MEM_FREE(mask_offsets);
 	}
 
 }
@@ -279,7 +280,7 @@ static void reset(struct db_main *db) {
 		buffer_ld_hashes = (cl_mem *)mem_alloc(max_salts * sizeof(cl_mem));
 		buffer_bitmaps = (cl_mem *)mem_alloc(max_salts * sizeof(cl_mem));
 		buffer_salts = (cl_mem *)mem_alloc(max_salts * sizeof(cl_mem));
-		local_mask_buffer = (unsigned char*) mem_calloc(MAX_KEYS_PER_CRYPT);
+		mask_offsets = (unsigned char*) mem_calloc(db->format->params.max_keys_per_crypt);
 
 		do {
 			salt -> sequential_id = ctr++;
@@ -524,7 +525,7 @@ static char *get_key(int index)
 		 * correct range of passwords is displayed.
 		 */
 		index = outKeyIdx[index] & 0x7ffffff;
-		mask_offset = local_mask_buffer[index];
+		mask_offset = mask_offsets[index];
 	}
 
 	len = saved_idx[index] & 63;
@@ -619,9 +620,11 @@ static int crypt_all(int *pcount, struct db_salt *currentsalt) {
 
 		keys_changed = 0;
 	}
-	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], buffer_outKeyIdx, CL_TRUE, 0,
-			(DB->format->params.max_keys_per_crypt), mask_offset_buffer, 0, NULL, NULL),
-			"failed in clEnqueWriteBuffer buffer_outKeyIdx");
+
+	if(msk_ctx.flg_wrd)
+			HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], buffer_outKeyIdx, CL_TRUE, 0,
+				(DB->format->params.max_keys_per_crypt), mask_offset_buffer, 0, NULL, NULL),
+				"failed in clEnqueWriteBuffer buffer_outKeyIdx");
 
 	// Execute method
 	clEnqueueNDRangeKernel( queue[ocl_gpu_id], crk_kernel, 1, NULL, &gws, &lws, 0, NULL, NULL);
@@ -644,7 +647,7 @@ static int crypt_all(int *pcount, struct db_salt *currentsalt) {
 						   CL_TRUE, 0, sizeof(cl_uint) * loaded_count[sequential_id] * 2,
 						   outKeyIdx, 0, NULL, NULL), "failed in reading cracked key indices back");
 		if(msk_ctx.flg_wrd)
-			memcpy(local_mask_buffer, mask_offset_buffer, (DB->format->params.max_keys_per_crypt));
+			memcpy(mask_offsets, mask_offset_buffer, (DB->format->params.max_keys_per_crypt));
 
 		return loaded_count[sequential_id];
 	}
