@@ -231,18 +231,13 @@ __kernel void nt(const __global uint *keys ,
 	uint num_keys = get_global_size(0);
 	uint num_loaded_hashes = loaded_hashes[0];
 	uchar activeRangePos[3], rangeNumChars[3];
-	uint i, j, k, ctr;
+	uint i, ii, j, k, ctr;
 
-	// hash[0] and hash[1] values are sawpped
 	uint hash[4];
 
 	__local uchar ranges[3 * MAX_GPU_CHARS];
 	__local uint sbitmap0[BITMAP_SIZE_1 >> 5];
 	__local uint sbitmap1[BITMAP_SIZE_1 >> 5];
-
-	if(!gid)
-		for (i = 0; i < num_loaded_hashes; i++)
-			outKeyIdx[i] = outKeyIdx[i + num_loaded_hashes] = 0;
 
 	for(i = 0; i < 3; i++) {
 		activeRangePos[i] = msk_ctx[0].activeRangePos[i];
@@ -264,6 +259,19 @@ __kernel void nt(const __global uint *keys ,
 
 
 	barrier(CLK_LOCAL_MEM_FENCE);
+
+	if(msk_ctx[0].flg_wrd) {
+		ii = outKeyIdx[gid>>2];
+		ii = (ii >> ((gid&3) << 3))&0xFF;
+		for(i = 0; i < 3; i++)
+			activeRangePos[i] += ii;
+		barrier(CLK_GLOBAL_MEM_FENCE);
+	}
+
+	if(gid==1)
+		for (i = 0; i < num_loaded_hashes; i++)
+			outKeyIdx[i] = outKeyIdx[i + num_loaded_hashes] = 0;
+	barrier(CLK_GLOBAL_MEM_FENCE);
 
 	coalasced_load(nt_buffer, keys, &md4_size, gid, num_keys);
 
