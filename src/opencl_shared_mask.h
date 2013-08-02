@@ -15,12 +15,12 @@
   /* Range of charcters for a placeholder in the mask */
 struct mask_range {
   /* Charchters in the range */
-	char chars[0x100];
+	unsigned char chars[0x100];
 
   /* Set to zero when the characters in the range are not consecutive,
    * otherwise start is set to the minumum value in range. Minimum
    * value cannot be a null character which has a value zero.*/
-  	char start;
+  	unsigned char start;
 
   /* Number of charchters in the range */
 	int count;

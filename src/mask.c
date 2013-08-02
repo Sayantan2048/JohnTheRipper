@@ -36,7 +36,7 @@ unsigned char *mask_offset_buffer;
 void combinationUtil(void *arr, int data[], int start, int end, int index, int r, int target, int *isOptimal);
 
 int checkRange(struct mask_context *ctx, int rangePos) {
-	char start = ctx -> ranges[rangePos].chars[0];
+	unsigned char start = ctx -> ranges[rangePos].chars[0];
 	int i;
 
 	/* Check if all values are consecutive in the given range */
@@ -150,7 +150,7 @@ static void set_mask(struct rpp_context *rpp_ctx, struct db_main *db, unsigned c
 void do_mask_crack(struct db_main *db, char *mask, char *wordlist)
 {
 	struct rpp_context rpp_ctx, rpp_ctx_restore;
-	char word[128], *mask_word, line[128];
+	unsigned char word[128], *mask_word, line[128];
 	FILE *file = NULL;
 	int flag;
 	unsigned int index, length;
@@ -202,7 +202,7 @@ void do_mask_crack(struct db_main *db, char *mask, char *wordlist)
 	mask_offset_buffer = (unsigned char*)mem_calloc(length);
 
 	if(file != NULL) {
-		//fprintf(stdout, "Using:wordlist:%d\n",length );
+		fprintf(stdout, "Using:wordlist:%d\n",length );
 		rpp_ctx_restore = rpp_ctx;
 		index = 0;
 		 while (fgets(line, sizeof(line), file) != NULL)
@@ -229,7 +229,7 @@ close_file:		fclose (file);
 
 	}
 
-	else {//fprintf(stdout, "NOT Using:wordlist\n");
+	else {fprintf(stdout, "NOT Using:wordlist\n");
 		flag = 0;
 		while ((mask_word = msk_next(&rpp_ctx, &msk_ctx, &flag))) {
 			if (ext_filter(mask_word))

@@ -1,12 +1,6 @@
 /*
  * This file is part of John the Ripper password cracker,
- * Copyright (c) 1996-98,2006,2009,2010,2011,2013 by Solar Designer
- */
-
-/*
- * This software is Copyright (c) 2013 Sayantan Datta <std2048 at gmail dot com>
- * and it is hereby released to the general public under the following terms:
- * Redistribution and use in source and binary forms, with or without modification, are permitted.
+ * Copyright (c) 1996-98,2006,2009,2010,2011 by Solar Designer
  */
 
 #include <string.h>
@@ -15,6 +9,7 @@
 #include "params.h"
 #include "config.h"
 #include "rpp.h"
+#include "common.h"
 
 int rpp_init(struct rpp_context *ctx, char *subsection)
 {
@@ -51,7 +46,6 @@ static void rpp_add_char(struct rpp_range *range, unsigned char c)
 	}
 
 	range->chars[range->count++] = (char)c;
-	//printf("%c ",c);
 }
 
 void rpp_process_rule(struct rpp_context *ctx)
@@ -102,7 +96,12 @@ void rpp_process_rule(struct rpp_context *ctx)
 			}
 			/* fall through */
 		default:
-			*output++ = c;
+			if (c == 'x' && atoi16[*input] != 0x7f && atoi16[input[1]] != 0x7f) {
+				// handle hex char
+				*output++ = ((atoi16[*input]<<4)+atoi16[input[1]]);
+				input += 2;
+			} else
+				*output++ = c;
 		}
 		break;
 
@@ -121,6 +120,12 @@ void rpp_process_rule(struct rpp_context *ctx)
 			break;
 		case 'd':
 			input = (unsigned char *)"[0-9]";
+			break;
+		case 's':
+			input = (unsigned char *)"[!-/:-@[-`{-~]";
+			break;
+		case 'a':
+			input = (unsigned char *)"[!-~]";
 			break;
 		default:
 			saved_input = NULL;
@@ -151,19 +156,29 @@ void rpp_process_rule(struct rpp_context *ctx)
 		while (*input && *input != ']')
 		switch (*input) {
 		case '\\':
-			if (*++input) rpp_add_char(range, c1 = *input++);
+			if (input[1] == 'x' && atoi16[input[2]] != 0x7F && atoi16[input[3]] != 0x7F) {
+				rpp_add_char(range, c1 = ((atoi16[input[2]]<<4)+atoi16[input[3]]));
+				input += 4;
+			} else
+				if (*++input) rpp_add_char(range, c1 = *input++);
 			break;
 
 		case '-':
 			if ((c2 = *++input)) {
 				input++;
+				if (c2 == '\\') {
+					if (input[0] == 'x' && atoi16[input[1]] != 0x7F && atoi16[input[2]] != 0x7F) {
+						c2 = ((atoi16[input[1]]<<4)+atoi16[input[2]]);
+						input += 3;
+					}
+				}
 				if (c1 && range->count) {
 					if (c1 > c2)
 						for (c = c1 - 1; c >= c2; c--)
 							rpp_add_char(range, c);
 					else
-						for (c = c1 + 1; c <= c2; c++)
-							rpp_add_char(range, c);
+						for (c = c1; c < c2; c++)
+							rpp_add_char(range, c + 1);
 				}
 			}
 			c1 = c2;
@@ -178,6 +193,7 @@ void rpp_process_rule(struct rpp_context *ctx)
 			input = saved_input;
 			saved_input = NULL;
 		}
+
 		break;
 
 	default:
@@ -196,19 +212,16 @@ char *rpp_next(struct rpp_context *ctx)
 	if (ctx->count < 0) {
 		if (!ctx->input) return NULL;
 		rpp_process_rule(ctx);
-
 	}
 
 	done = 1;
 	if ((index = ctx->count - 1) >= 0) {
-
 		do {
 			range = &ctx->ranges[index];
 			*range->pos = range->chars[range->index];
 		} while (index--);
 
 		index = ctx->count - 1;
-
 		do {
 			range = &ctx->ranges[index];
 			if (range->flag_p > 0)
@@ -221,6 +234,7 @@ char *rpp_next(struct rpp_context *ctx)
 			}
 			range->index = 0;
 		} while (index--);
+
 		done = index < 0;
 
 		index = ctx->count - 1;
@@ -232,7 +246,7 @@ char *rpp_next(struct rpp_context *ctx)
 				continue; /* don't bother to support this */
 			range->index = ctx->ranges[range->flag_p - 1].index;
 			if (range->index >= range->count)
-			range->index = range->count - 1;
+				range->index = range->count - 1;
 		} while (index--);
 	}
 

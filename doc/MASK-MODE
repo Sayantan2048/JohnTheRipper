@@ -1,0 +1,61 @@
+Formats supporting mask mode:
+
+	descrypt-opencl
+	raw-md5-opencl
+	nt-opencl
+	mscash-opencl
+	raw-sha1-opencl
+	raw-md4-opencl
+
+How to use:
+
+	./john -format=NAME -mask=MASK file
+
+Supported MASK placeholders:
+
+	?l = all lowercase alphabets
+	?u = all uppercase alphabets
+	?d = all digits
+	?s = all special characters, !"#$%&'()*+,-./:;<=>?@[\]^_`{|}~
+	?a = all printable ASCII characters, !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
+	[X-Y] = all charcters between X and Y inclusive.
+
+		X,Y can be any ascii printable ascii characters or
+		\\xhh where hh is two digit hexadecimal number.
+
+		example:
+		[\\x01-\\xff] = all characters except null
+		[a-d] = abcd
+		[a-du-ztmp] = abcduvwxyztmp
+		[\\x30-\\x3da-d] = 0123456789:;<=abcd
+
+Supported MASK syntax:
+
+	examples:
+
+	MASK=?a?u?d?s?l[d][\\x30-\\x3d][p-q]
+
+Restrictions:
+
+	Number of charcters per place holder:
+		a. When the character range is consecutive: No limitation i.e upto 255 characters
+			Please note that currently only descrypt-opencl and raw-md5-opencl support upto 255 characters. Other formats will be added as soon as possible.
+		b. When the character range is not consecutive: Upto 64 charcters.
+
+MASK MODE + WORDLIST MODE:
+
+	formats supporting this combination:
+		raw-md5-opencl
+		nt-opencl
+		mscash-opencl
+		raw-sha1-opencl
+		raw-md4-opencl
+
+	Description:
+	This mode will append a mask to the end of each word of the wordlist file.
+
+	Syntax:
+	./john --wordlist=WORDLIST --mask=MASK -format=NAME file
+
+	WORDLIST = Any wordlist file containing one word each line without any comment or blank space on top.
+	MASK = Any mask described above
