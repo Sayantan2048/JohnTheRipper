@@ -23,7 +23,7 @@
 
 #define DES_bs_vector			WORD
 
-#define MULTIPLIER                      (WORK_GROUP_SIZE * 4096)//(WORK_GROUP_SIZE * 1024)0x100000
+#define MULTIPLIER                      (WORK_GROUP_SIZE * 2048)//(WORK_GROUP_SIZE * 1024)0x100000
 
 
 #define MIN_KEYS_PER_CRYPT		MULTIPLIER

@@ -34,6 +34,8 @@ static unsigned char *input_keys;
 static WORD stored_salt[4096]= {0x7fffffff};
 static struct mask_context msk_ctx;
 static struct db_main *DB;
+static unsigned int somethingCracked = 0;
+static unsigned int keyCount = 0;
 
 void DES_opencl_clean_all_buffer()
 {
@@ -61,12 +63,17 @@ void opencl_DES_reset(struct db_main *db) {
 
 
 	if(db) {
-	int i;
+	int i, ctr = 0;
+	struct db_salt *salt = db -> salts;
 
 	if((db->password_count) * 32 > MULTIPLIER) {
 		fprintf(stderr, "Reduce the number of hashs and try again..\n");
 		exit(0);
 	}
+
+	do {
+			salt -> sequential_id = ctr++;
+	} while((salt = salt->next));
 
 	MEM_FREE(loaded_hash);
 	MEM_FREE(cmp_out);
@@ -201,15 +208,8 @@ fill2:
 	}
 
 	else  	{
-			memcpy(input_keys + 8 * index, key , 8);
-
-	if(key[0] == 'm')
-	    if(key[3] == 's')
-		if(key[4] == 'a')
-		  if(key[5] == 'd')
-		    if(key[6] == 'o')
-		     if(key[7] == 'o')
-	 printf("out kernel %s\n",key);
+		keyCount++;
+		memcpy(input_keys + 8 * index, key , 8);
 
 	}
 }
@@ -236,6 +236,8 @@ char *opencl_DES_bs_get_key(int index)
 	}
 
 	else {
+	  if(index > MULTIPLIER) index = MULTIPLIER - 1;
+	 // fprintf(stderr, "Ingetkey:%d\n",index);
 	  memcpy(out, input_keys + 8 * index, 8);
 	  out[8] = '\0';
 	}
@@ -270,7 +272,7 @@ int opencl_DES_bs_cmp_one_b(WORD *binary, int count, int index)
 	DES_bs_vector *b;
 	int depth;
 	unsigned int sector;
-	if(count == 64) printf("cmp exact%d\n",index);
+	//if(count == 64) printf("cmp exact%d\n",index);
 	sector = index >> DES_BS_LOG2;
 	index &= (DES_BS_DEPTH - 1);
 	depth = index >> 3;
@@ -786,7 +788,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 		min = MULTIPLIER ;
 
 		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], cmp_out_gpu, CL_TRUE, 0, (salt -> count) * sizeof(unsigned int), cmp_out, 0, NULL, NULL),"Write FAILED\n");
-		printf("CMP out %d\n", cmp_out[0]);
+		printf("CMP out %d %d\n", cmp_out[0], salt->sequential_id );
 		for (i = 0; i < salt->count ;i++) {
 			if(!cmp_out[i]) {
 				cmp_out[i] = ~(unsigned int)0;
@@ -907,7 +909,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 		min = MULTIPLIER ;
 
 		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], cmp_out_gpu, CL_TRUE, 0, (salt->count) * sizeof(unsigned int), cmp_out, 0, NULL, NULL), "Write FAILED\n");
-		printf("CMP out %d\n", cmp_out[0]);
+		printf("CMP out %d %d %d\n", cmp_out[0], (salt->sequential_id), keyCount);
 		for (i = 0; i < salt->count ;i++) {
 			if(!cmp_out[i]) {
 				cmp_out[i] = ~(unsigned int)0;
@@ -926,6 +928,7 @@ int opencl_DES_bs_crypt_25(int *pcount, struct db_salt *salt)
 			HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], B_gpu, CL_TRUE, 0, (salt -> count) * 64 * sizeof(DES_bs_vector), B, 0, NULL, NULL), "Write FAILED\n");
 			HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], transfer_keys_gpu, CL_TRUE, 0, (salt -> count) * 8 * 32, input_keys, 0, NULL, NULL ), "Failed Copy data from gpu");
 			clFinish(queue[ocl_gpu_id]);
+			somethingCracked = 1;
 			printf("crypt all %d\n",max + 1);
 			return (max + 1) * DES_BS_DEPTH ;
 		}
