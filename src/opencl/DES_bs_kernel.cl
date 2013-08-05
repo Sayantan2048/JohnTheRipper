@@ -334,7 +334,8 @@ inline void cmp( __private vtype *B,
 	  __local uchar *range,
 	  __private uchar *rangeNumChars,
 	  uint offset,
-	  __private uchar *start) {
+	  __private uchar *start,
+	  __global uint *outKeyIdx) {
 
 
 	int value[2] , mask, i, bit;
@@ -359,6 +360,9 @@ inline void cmp( __private vtype *B,
 		mask = 64 * i;
 		for (bit = 0; bit < 64; bit++)
 				B_global[mask + bit] = (DES_bs_vector)B[bit] ;
+
+		outKeyIdx[i] = get_global_id(0) | 0x80000000;
+		outKeyIdx[i + num_loaded_hash] = offset;
 
 		pass_gen( outpu_keys,
 			  key,
@@ -1412,14 +1416,72 @@ next:
 
 }
 
+inline void cmp_s( __private vtype *B,
+	  __global int *binary,
+	  int num_loaded_hash,
+	   __global DES_bs_vector *B_global,
+	  __global char *outpu_keys,
+	  __private uchar *key,
+	  __private uchar *activeRangePos,
+	  uint activeRangeCount,
+	  __local uchar *range,
+	  __private uchar *rangeNumChars,
+	  uint offset,
+	  __private uchar *start,
+	  __global uint *outKeyIdx,
+	  int section) {
+
+
+	int value[2] , mask, i, bit;
+
+	for(i = 0 ; i < num_loaded_hash; i++) {
+
+		value[0] = binary[i];
+		value[1] = binary[i + num_loaded_hash];
+
+		mask = B[0] ^ -(value[0] & 1);
+
+		for (bit = 1; bit < 32; bit++)
+			mask |= B[bit] ^ -((value[0] >> bit) & 1);
+
+		for (; bit < 64; bit += 2) {
+			mask |= B[bit] ^ -((value[1] >> (bit & 0x1F)) & 1);
+			mask |= B[bit + 1] ^ -((value[1] >> ((bit + 1) & 0x1F)) & 1);
+
+			if (mask == ~(int)0) goto next_hash;
+		}
+
+		mask = 64 * i;
+		for (bit = 0; bit < 64; bit++)
+				B_global[mask + bit] = (DES_bs_vector)B[bit] ;
+
+		outKeyIdx[i] = section | 0x80000000;
+		outKeyIdx[i + num_loaded_hash] = offset;
+
+		pass_gen( outpu_keys,
+			  key,
+			  activeRangePos,
+			  activeRangeCount,
+			  range,
+			  rangeNumChars,
+			  offset,
+			  i,
+			  start);
+
+	next_hash: ;
+	}
+
+}
+#undef GET_BIT
+
  __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_size(3072))),
 			__global int *index96 ,
 			__global DES_bs_vector *B_global,
 			__global int *binary,
 			int num_loaded_hash,
-			__global uint *output,
 			__global char *transfer_keys,
-			__global struct mask_context *msk_ctx)  {
+			__global struct mask_context *msk_ctx,
+			__global uint *outKeyIdx)  {
 
 		unsigned int section = get_global_id(0), global_offset_B ,local_offset_K;
 		unsigned int local_id = get_local_id(0), activeRangeCount, offset ;
@@ -1443,7 +1505,7 @@ next:
 		for (i = 0; i < 8; i++ )
 			input_key[i] = transfer_keys[8*section + i];
 
-		for (i = 0; i < 3; i++) {
+		for (i = 0; i < activeRangeCount; i++) {
 			rangeNumChars[i] = msk_ctx[0].ranges[activeRangePos[i]].count;
 			start[i] = msk_ctx[0].ranges[activeRangePos[i]].start;
 		}
@@ -1457,7 +1519,8 @@ next:
 
 		if(!section)
 			for(i = 0; i < num_loaded_hash; i++)
-				output[i] = 0;
+				outKeyIdx[i] = outKeyIdx[i + num_loaded_hash] = 0;
+		barrier(CLK_GLOBAL_MEM_FENCE);
 
 #ifndef RV7xx
 		if (!local_id ) {
@@ -1488,7 +1551,7 @@ next:
 			iterations = 25;
 			des_loop(B, _local_K, _local_index768, index768, index96, iterations, local_offset_K);
 
-			cmp( B, binary, num_loaded_hash, output, B_global, transfer_keys, input_key, activeRangePos, activeRangeCount, range, rangeNumChars, offset, start) ;
+			cmp_s( B, binary, num_loaded_hash, B_global, transfer_keys, input_key, activeRangePos, activeRangeCount, range, rangeNumChars, offset, start, outKeyIdx, section);
 
 			offset = i*32;
 			i++;
