@@ -1377,7 +1377,7 @@ next:
 
 }
 
- __kernel void DES_bs_25_bench( constant uint *index768 __attribute__((max_constant_size(3072))),
+__kernel void DES_bs_25_bench( constant uint *index768 __attribute__((max_constant_size(3072))),
 			__global int *index96 ,
 			__global DES_bs_transfer *DES_bs_all,
 			__global DES_bs_vector *B_global)  {
@@ -1420,14 +1420,7 @@ inline void cmp_s( __private vtype *B,
 	  __global int *binary,
 	  int num_loaded_hash,
 	   __global DES_bs_vector *B_global,
-	  __global char *outpu_keys,
-	  __private uchar *key,
-	  __private uchar *activeRangePos,
-	  uint activeRangeCount,
-	  __local uchar *range,
-	  __private uchar *rangeNumChars,
 	  uint offset,
-	  __private uchar *start,
 	  __global uint *outKeyIdx,
 	  int section) {
 
@@ -1457,16 +1450,6 @@ inline void cmp_s( __private vtype *B,
 
 		outKeyIdx[i] = section | 0x80000000;
 		outKeyIdx[i + num_loaded_hash] = offset;
-
-		pass_gen( outpu_keys,
-			  key,
-			  activeRangePos,
-			  activeRangeCount,
-			  range,
-			  rangeNumChars,
-			  offset,
-			  i,
-			  start);
 
 	next_hash: ;
 	}
@@ -1551,7 +1534,7 @@ inline void cmp_s( __private vtype *B,
 			iterations = 25;
 			des_loop(B, _local_K, _local_index768, index768, index96, iterations, local_offset_K);
 
-			cmp_s( B, binary, num_loaded_hash, B_global, transfer_keys, input_key, activeRangePos, activeRangeCount, range, rangeNumChars, offset, start, outKeyIdx, section);
+			cmp_s( B, binary, num_loaded_hash, B_global, offset, outKeyIdx, section);
 
 			offset = i*32;
 			i++;
