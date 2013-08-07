@@ -334,8 +334,7 @@ inline void cmp( __private vtype *B,
 	  __local uchar *range,
 	  __private uchar *rangeNumChars,
 	  uint offset,
-	  __private uchar *start,
-	  __global uint *outKeyIdx) {
+	  __private uchar *start) {
 
 
 	int value[2] , mask, i, bit;
@@ -360,9 +359,6 @@ inline void cmp( __private vtype *B,
 		mask = 64 * i;
 		for (bit = 0; bit < 64; bit++)
 				B_global[mask + bit] = (DES_bs_vector)B[bit] ;
-
-		outKeyIdx[i] = get_global_id(0) | 0x80000000;
-		outKeyIdx[i + num_loaded_hash] = offset;
 
 		pass_gen( outpu_keys,
 			  key,
