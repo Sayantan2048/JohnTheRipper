@@ -512,7 +512,7 @@ next:
 
 }
 
-__kernel void DES_bs_25_bench( constant uint *index768 __attribute__((max_constant_size(3072))),
+__kernel void DES_bs_25_self_test( constant uint *index768 __attribute__((max_constant_size(3072))),
 			__global int *index96 ,
 			__global DES_bs_transfer *DES_bs_all,
 			__global DES_bs_vector *B_global)  {
@@ -592,7 +592,7 @@ inline void cmp_s( __private vtype *B,
 }
 #undef GET_BIT
 
- __kernel void DES_bs_25( constant uint *index768 __attribute__((max_constant_size(3072))),
+ __kernel void DES_bs_25_mm( constant uint *index768 __attribute__((max_constant_size(3072))),
 			__global int *index96 ,
 			__global DES_bs_vector *B_global,
 			__global int *binary,
@@ -677,4 +677,50 @@ inline void cmp_s( __private vtype *B,
 		} while (i <= loop_count);
 
 }
+
+__kernel void DES_bs_25_om( constant uint *index768 __attribute__((max_constant_size(3072))),
+			__global int *index96 ,
+			__global DES_bs_transfer *DES_bs_all,
+			__global DES_bs_vector *B_global,
+			__global int *binary,
+			int num_loaded_hash,
+			__global uint *outKeyIdx )  {
+
+		unsigned int section = get_global_id(0), global_offset_B ,local_offset_K;
+		unsigned int local_id = get_local_id(0) ;
+		int iterations, i;
+		global_offset_B = 64 * section;
+		local_offset_K  = 56 * local_id;
+
+		vtype B[64];
+
+		__local DES_bs_vector _local_K[56 * WORK_GROUP_SIZE] ;
+#ifndef RV7xx
+		__local ushort _local_index768[768] ;
+#endif
+
+
+
+#ifndef RV7xx
+		if (!local_id ) {
+			for (i = 0; i < 768; i++)
+				_local_index768[i] = index768[i];
+
+
+		}
+
+		barrier(CLK_LOCAL_MEM_FENCE);
+#endif
+		if(!section)
+			for(i = 0; i < num_loaded_hash; i++)
+				outKeyIdx[i] = outKeyIdx[i + num_loaded_hash] = 0;
+		barrier(CLK_GLOBAL_MEM_FENCE);
+
+		DES_bs_finalize_keys_bench(section, DES_bs_all, local_offset_K, _local_K);
+		iterations = 25;
+		des_loop(B, _local_K, _local_index768, index768, index96, iterations, local_offset_K);
+		cmp_s( B, binary, num_loaded_hash, B_global, 0, outKeyIdx, section);
+
+}
+
 #endif

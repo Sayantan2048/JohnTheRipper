@@ -213,8 +213,8 @@ struct fmt_main fmt_opencl_DES = {
 		},
 		salt_hash,
 		set_salt,
-		opencl_DES_bs_set_key,
-		opencl_DES_bs_get_key,
+		opencl_DES_bs_set_key_self_test,
+		opencl_DES_bs_get_key_self_test,
 		fmt_default_clear_keys,
 		opencl_DES_bs_crypt_25_self_test,
 		{
