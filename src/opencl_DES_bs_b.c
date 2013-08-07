@@ -297,7 +297,7 @@ char *opencl_DES_bs_get_key_mm(int index)
 	return out;
 }
 
-char *opencl_DES_bs_get_key_om(int index)
+static char *opencl_DES_bs_get_key_om(int index)
 {
 	static char out[PLAINTEXT_LENGTH + 1];
 	unsigned int section,block;
@@ -704,8 +704,22 @@ int opencl_DES_bs_crypt_25_om(int *pcount, struct db_salt *salt)
 
 	printf("CMP out %d %d %d\n", cmp_out, (salt->sequential_id), keyCount);
 
-	HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], B_gpu, CL_TRUE, 0, MULTIPLIER * 64 * sizeof(DES_bs_vector), B, 0, NULL, NULL), "Write FAILED\n");
-	clFinish(queue[ocl_gpu_id]);
-	return num_loaded_hashes * DES_BS_DEPTH;
+	if (cmp_out) {
+		max = 0;
+		min = salt->count;
+		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], buffer_outKeyIdx, CL_TRUE, 0, 2 * (salt->count) * sizeof(unsigned int), outKeyIdx, 0, NULL, NULL), "Write FAILED\n");
+		for (i = 0; i < salt->count ;i++) {
+			if (outKeyIdx[i] > 0) {
+				max = i;
+				if(max < min)
+					min = max;
+			}
+		}
+		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], B_gpu, CL_TRUE, 0, (salt -> count) * 64 * sizeof(DES_bs_vector), B, 0, NULL, NULL), "Write FAILED\n");
+		clFinish(queue[ocl_gpu_id]);
+		printf("crypt all %d\n",max + 1);
+		return (max + 1) * DES_BS_DEPTH ;
+	}
+	else return 0;
 }
 #endif

@@ -54,7 +54,9 @@ static unsigned int mask_mode = 0;
 static WORD stored_salt[4096]= {0x7fffffff};
 
 static int opencl_DES_bs_crypt_25_mm(int *pcount, struct db_salt *salt);
+static int opencl_DES_bs_crypt_25_om(int *pcount, struct db_salt *salt);
 static char *opencl_DES_bs_get_key_mm(int index);
+static char *opencl_DES_bs_get_key_om(int index);
 static void opencl_DES_bs_set_key_mm(char *key, int index);
 
 void DES_opencl_clean_all_buffer() {
@@ -70,7 +72,6 @@ void DES_opencl_clean_all_buffer() {
 	HANDLE_CLERROR(clReleaseMemObject(index96_gpu), errMsg);
 	HANDLE_CLERROR(clReleaseMemObject(opencl_DES_bs_data_gpu), errMsg);
 	HANDLE_CLERROR(clReleaseMemObject(B_gpu), errMsg);
-
 
 	if(!self_test) {
 		MEM_FREE(loaded_hashes);
@@ -92,10 +93,11 @@ void DES_opencl_clean_all_buffer() {
 		for( i = 0; i < 4096; i++)
 			if(stored_salt[i] == i)
 				HANDLE_CLERROR(clReleaseKernel(self_test_kernel[i]), "Release kernel self-test failed.");
+
+	HANDLE_CLERROR(clReleaseCommandQueue(queue[ocl_gpu_id]), "Error releasing command queue.");
 }
 
 void opencl_DES_reset(struct db_main *db) {
-
 
 	if(db) {
 		unsigned int i, ctr = 0, length = 0;
@@ -146,14 +148,19 @@ void opencl_DES_reset(struct db_main *db) {
 			db->format->methods.set_key = opencl_DES_bs_set_key_mm;
 		}
 
+		else {
+			db->format->methods.crypt_all = opencl_DES_bs_crypt_25_om;
+			db->format->methods.set_key = opencl_DES_bs_set_key_self_test;
+			db->format->methods.get_key = opencl_DES_bs_get_key_om;
+
+		}
+
 		/* Reset the salts set during self test */
 		for( i = 0; i < 4096; i++)
 			if(stored_salt[i] == i)
 				HANDLE_CLERROR(clReleaseKernel(self_test_kernel[i]), "Release kernel self-test failed.");
 		for (i = 0; i < 4096; i++)
 			stored_salt[i] = 0x7fffffff;
-
-
 	}
 }
 
@@ -275,6 +282,34 @@ static char *opencl_DES_bs_get_key_mm(int index)
 		passgen(keyIdx, 0, out);
 
 	out[8] = '\0';
+	return out;
+}
+
+static char *opencl_DES_bs_get_key_om(int index)
+{
+	static char out[PLAINTEXT_LENGTH + 1];
+	unsigned int section,block;
+	unsigned char *src;
+	char *dst;
+
+	section = index >> 5;
+
+	if(section < num_loaded_hashes)
+		index = ((outKeyIdx[section] & 0x7fffffff) << 5) + index % DES_BS_DEPTH;
+
+	index = (index > (MULTIPLIER - 1))? MULTIPLIER - 1 : index;
+
+	section = index/DES_BS_DEPTH;
+	block  = index%DES_BS_DEPTH;
+	init_t();
+
+	src = opencl_DES_bs_all[section].pxkeys[block];
+	dst = out;
+	while (dst < &out[PLAINTEXT_LENGTH] && (*dst = *src)) {
+		src += sizeof(DES_bs_vector) * 8;
+		dst++;
+	}
+	*dst = 0;
 	return out;
 }
 
@@ -573,7 +608,6 @@ int opencl_DES_bs_crypt_25_self_test(int *pcount, struct db_salt *salt)
 	HANDLE_CLERROR(err, "Enque Kernel Failed");
 	clWaitForEvents(1, &evnt);
 
-
 	HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], B_gpu, CL_TRUE, 0, MULTIPLIER * 64 * sizeof(DES_bs_vector), B, 0, NULL, NULL),"Write FAILED\n");
 	clFinish(queue[ocl_gpu_id]);
 	return keys_count;
@@ -660,6 +694,108 @@ static int opencl_DES_bs_crypt_25_mm(int *pcount, struct db_salt *salt)
 	*pcount = (MULTIPLIER * 32 ) ;
 
 	err = clEnqueueNDRangeKernel(queue[ocl_gpu_id], crk_kernel_mm[pos], 1, NULL, &N, &M, 0, NULL, &evnt);
+	HANDLE_CLERROR(err, "Enque Kernel Failed");
+	clWaitForEvents(1, &evnt);
+
+	HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], buffer_outKeyIdx, CL_TRUE, 0, (salt->count) * sizeof(unsigned int), outKeyIdx, 0, NULL, NULL), "Write FAILED\n");
+	cmp_out = 0;
+
+	// If a positive match is found outKeyIdx contains some positive (gid | 0x80000000) value else contains 0
+	for(i = 0; i < ((salt->count) & (~cmp_out)); i++)
+		cmp_out = outKeyIdx[i]?0xffffffff:0;
+
+	printf("CMP out %d %d %d\n", cmp_out, (salt->sequential_id), keyCount);
+
+	if (cmp_out) {
+		max = 0;
+		min = salt->count;
+		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], buffer_outKeyIdx, CL_TRUE, 0, 2 * (salt->count) * sizeof(unsigned int), outKeyIdx, 0, NULL, NULL), "Write FAILED\n");
+		for (i = 0; i < salt->count ;i++) {
+			if (outKeyIdx[i] > 0) {
+				max = i;
+				if(max < min)
+					min = max;
+			}
+		}
+		HANDLE_CLERROR(clEnqueueReadBuffer(queue[ocl_gpu_id], B_gpu, CL_TRUE, 0, (salt -> count) * 64 * sizeof(DES_bs_vector), B, 0, NULL, NULL), "Write FAILED\n");
+		clFinish(queue[ocl_gpu_id]);
+		printf("crypt all %d\n",max + 1);
+		return (max + 1) * DES_BS_DEPTH ;
+	}
+
+	else return 0;
+}
+
+static int opencl_DES_bs_crypt_25_om(int *pcount, struct db_salt *salt)
+{
+	int keys_count = *pcount;
+	unsigned int sections = 0, keys_count_multiple;
+	struct db_password *pw;
+	unsigned int i = 0, *bin;
+	static unsigned int pos;
+	cl_event evnt;
+	size_t N,M;
+
+	if (keys_count%DES_BS_DEPTH == 0)
+		keys_count_multiple = keys_count;
+	else
+		keys_count_multiple = (keys_count / DES_BS_DEPTH + 1) * DES_BS_DEPTH;
+
+	sections = keys_count_multiple / DES_BS_DEPTH;
+
+	M = DES_local_work_size;
+
+	if (sections % DES_local_work_size != 0)
+		N = (sections / DES_local_work_size + 1) * DES_local_work_size ;
+	else
+		N = sections;
+
+	if (set_salt == 1) {
+		unsigned int found = 0;
+		if (stored_salt[current_salt] == current_salt) {
+			found = 1;
+			pos = current_salt;
+		}
+
+		if (found == 0) {
+			pos = current_salt;
+			modify_src();
+			clReleaseProgram(program[ocl_gpu_id]);
+			opencl_build(ocl_gpu_id, "-cl-opt-disable -fno-bin-amdil -fno-bin-source -fbin-exe", 0, NULL, 1);
+				crk_kernel_om[pos] = clCreateKernel(program[ocl_gpu_id], "DES_bs_25_om", &err);
+				if (err) {
+				fprintf(stderr, "Create Kernel DES_bs_25_om FAILED\n");
+				return 0;
+				}
+
+				HANDLE_CLERROR(clSetKernelArg(crk_kernel_om[pos], 0, sizeof(cl_mem), &index768_gpu), "Set Kernel Arg FAILED arg0\n");
+				HANDLE_CLERROR(clSetKernelArg(crk_kernel_om[pos], 1, sizeof(cl_mem), &opencl_DES_bs_data_gpu), "Set Kernel Arg FAILED arg2\n");
+				HANDLE_CLERROR(clSetKernelArg(crk_kernel_om[pos], 2, sizeof(cl_mem),&B_gpu), "Set Kernel Arg FAILED arg3\n");
+				HANDLE_CLERROR(clSetKernelArg(crk_kernel_om[pos], 3, sizeof(cl_mem), &loaded_hash_gpu), "Set Kernel krnl Arg 4 :FAILED") ;
+				HANDLE_CLERROR(clSetKernelArg(crk_kernel_om[pos], 5, sizeof(cl_mem), &buffer_outKeyIdx), "Set Kernel Arg krnl FAILED arg8\n");
+
+			stored_salt[current_salt] = current_salt;
+		}
+		set_salt = 0;
+
+	 printf("NEW SALT\n");
+	}
+	pw = salt -> list;
+	do {
+		  bin = (unsigned int *)pw -> binary;
+		  loaded_hashes[i] = bin[0] ;
+		  loaded_hashes[i + salt -> count] = bin[1];
+		  i++ ;
+		  //  printf("%d %d\n", i++, bin[0]);
+	} while ((pw = pw -> next)) ;
+	num_loaded_hashes = (salt -> count);
+	//printf("%d\n",loaded_hashes[salt->count-1]);
+	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id], loaded_hash_gpu, CL_TRUE, 0, (salt -> count) * sizeof(int) * 2, loaded_hashes, 0, NULL, NULL ), "Failed Copy data to gpu");
+	HANDLE_CLERROR(clSetKernelArg(crk_kernel_om[pos], 4, sizeof(int), &(salt->count)), "Set Kernel krnl Arg 5 :FAILED") ;
+
+	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[ocl_gpu_id],opencl_DES_bs_data_gpu,CL_TRUE,0,MULTIPLIER*sizeof(opencl_DES_bs_transfer),opencl_DES_bs_data,0,NULL,NULL ), "Failed Copy data to gpu");
+
+	err = clEnqueueNDRangeKernel(queue[ocl_gpu_id], crk_kernel_om[pos], 1, NULL, &N, &M, 0, NULL, &evnt);
 	HANDLE_CLERROR(err, "Enque Kernel Failed");
 	clWaitForEvents(1, &evnt);
 
