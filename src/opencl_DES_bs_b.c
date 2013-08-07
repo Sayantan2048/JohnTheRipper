@@ -74,6 +74,7 @@ void DES_opencl_clean_all_buffer()
 	MEM_FREE(input_keys);
 	HANDLE_CLERROR(clReleaseKernel(crypt_kernel), "Error releasing self test kernel.");
 	HANDLE_CLERROR(clReleaseKernel(crk_kernel_mm), "Error releasing mask mode kernel.");
+	HANDLE_CLERROR(clReleaseKernel(crk_kernel_om), "Error releasing mask mode kernel.");
 	HANDLE_CLERROR(clReleaseCommandQueue(queue[ocl_gpu_id]), "Error releasing command queue.");
 
 }
