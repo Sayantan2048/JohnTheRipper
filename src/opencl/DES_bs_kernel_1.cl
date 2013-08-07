@@ -319,22 +319,13 @@ void pass_gen(__global char *outpu_keys,
 		  }
 }
 
-#define GET_BIT \
-	(unsigned int)*(unsigned char *)&b[0] >> idx
-
-inline void cmp( __private vtype *B,
+inline void cmp_s( __private vtype *B,
 	  __global int *binary,
 	  int num_loaded_hash,
-	  volatile __global uint *output,
-	  __global DES_bs_vector *B_global,
-	  __global char *outpu_keys,
-	  __private uchar *key,
-	  __private uchar *activeRangePos,
-	  uint activeRangeCount,
-	  __local uchar *range,
-	  __private uchar *rangeNumChars,
+	   __global DES_bs_vector *B_global,
 	  uint offset,
-	  __private uchar *start) {
+	  __global uint *outKeyIdx,
+	  int section) {
 
 
 	int value[2] , mask, i, bit;
@@ -360,23 +351,13 @@ inline void cmp( __private vtype *B,
 		for (bit = 0; bit < 64; bit++)
 				B_global[mask + bit] = (DES_bs_vector)B[bit] ;
 
-		pass_gen( outpu_keys,
-			  key,
-			  activeRangePos,
-			  activeRangeCount,
-			  range,
-			  rangeNumChars,
-			  offset,
-			  i,
-			  start);
-
-		atomic_max( &output[i], i + 1) ;
+		outKeyIdx[i] = section | 0x80000000;
+		outKeyIdx[i + num_loaded_hash] = offset;
 
 	next_hash: ;
 	}
 
 }
-#undef GET_BIT
 
 inline void DES_bs_finalize_keys_bench(unsigned int section,
 				__global DES_bs_transfer *DES_bs_all,
@@ -692,9 +673,9 @@ __kernel void DES_bs_25_mm( constant uint *index768 __attribute__((max_constant_
 			  __global DES_bs_vector *B_global,
 			  __global int *binary,
 			  int num_loaded_hash,
-			  volatile __global uint *output,
 			  __global char *transfer_keys,
-			  __global struct mask_context *msk_ctx) {
+			  __global struct mask_context *msk_ctx,
+			  __global uint *outKeyIdx) {
 
 		unsigned int section = get_global_id(0), local_offset_K, loop_count;
 		unsigned int local_id = get_local_id(0),  activeRangeCount, offset;
@@ -712,7 +693,7 @@ __kernel void DES_bs_25_mm( constant uint *index768 __attribute__((max_constant_
 
 		if(!section)
 			for(i = 0; i < num_loaded_hash; i++)
-				output[i] = 0;
+				outKeyIdx[i] = outKeyIdx[i + num_loaded_hash] = 0;
 
 		for (i = 0; i < 8 ;i++)
 			activeRangePos[i] = msk_ctx[0].activeRangePos[i];
@@ -732,6 +713,10 @@ __kernel void DES_bs_25_mm( constant uint *index768 __attribute__((max_constant_
 				loop_count *= rangeNumChars[i];
 
 		loop_count = loop_count&31 ? (loop_count >> 5) + 1: loop_count >> 5;
+
+		if(!section)
+			for(i = 0; i < num_loaded_hash; i++)
+				outKeyIdx[i] = outKeyIdx[i + num_loaded_hash] = 0;
 
 		if (!local_id ) {
 			for (i = 0; i < 768; i++)
@@ -757,7 +742,7 @@ __kernel void DES_bs_25_mm( constant uint *index768 __attribute__((max_constant_
 			iterations = 25;
 			des_loop(B, _local_K, _local_index768, index768, iterations, local_offset_K);
 
-			cmp(B, binary, num_loaded_hash, output, B_global, transfer_keys, input_key, activeRangePos, activeRangeCount, range, rangeNumChars, offset, start);
+			cmp_s( B, binary, num_loaded_hash, B_global, offset, outKeyIdx, section);
 
 			offset = i*32;
 
