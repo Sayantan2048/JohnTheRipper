@@ -150,7 +150,7 @@ static void set_mask(struct rpp_context *rpp_ctx, struct db_main *db, unsigned c
 void do_mask_crack(struct db_main *db, char *mask, char *wordlist)
 {
 	struct rpp_context rpp_ctx, rpp_ctx_restore;
-	unsigned char word[128], *mask_word, line[128];
+	char word[128], *mask_word, line[128];
 	FILE *file = NULL;
 	int flag;
 	unsigned int index, length;
