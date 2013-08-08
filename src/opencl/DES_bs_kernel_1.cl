@@ -260,6 +260,7 @@ __kernel void DES_bs_25_mm( constant uint *index768 __attribute__((max_constant_
 		if(!section)
 			for(i = 0; i < num_loaded_hash; i++)
 				outKeyIdx[i] = outKeyIdx[i + num_loaded_hash] = 0;
+		barrier(CLK_GLOBAL_MEM_FENCE);
 
 		if (!local_id ) {
 			for (i = 0; i < 768; i++)
@@ -292,6 +293,7 @@ __kernel void DES_bs_25_mm( constant uint *index768 __attribute__((max_constant_
 		} ;
 }
 
+#if !MASK_MODE_ONLY
 __kernel void DES_bs_25_om( constant uint *index768 __attribute__((max_constant_size(3072))),
 			  __global DES_bs_transfer *DES_bs_all,
 			  __global DES_bs_vector *B_global,
@@ -328,4 +330,6 @@ __kernel void DES_bs_25_om( constant uint *index768 __attribute__((max_constant_
 		cmp_s( B, binary, num_loaded_hash, B_global, 0, outKeyIdx, section);
 
 }
+#endif
+
 #endif

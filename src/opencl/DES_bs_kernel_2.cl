@@ -510,6 +510,7 @@ __kernel void DES_bs_25_mm(__global DES_bs_vector *B_global,
 		if(!section)
 			for(i = 0; i < num_loaded_hash; i++)
 				outKeyIdx[i] = outKeyIdx[i + num_loaded_hash] = 0;
+		barrier(CLK_GLOBAL_MEM_FENCE);
 
 		if (!local_id ) {
 
@@ -538,6 +539,7 @@ __kernel void DES_bs_25_mm(__global DES_bs_vector *B_global,
 		}
 }
 
+#if !MASK_MODE_ONLY
 __kernel void DES_bs_25_om(__global DES_bs_transfer *DES_bs_all,
 			__global DES_bs_vector *B_global,
 			__global int *binary,
@@ -565,5 +567,6 @@ __kernel void DES_bs_25_om(__global DES_bs_transfer *DES_bs_all,
 		des_loop(B, _local_K, iterations, local_offset_K);
 		cmp_s( B, binary, num_loaded_hash, B_global, 0, outKeyIdx, section);
 }
+#endif
 
 #endif
