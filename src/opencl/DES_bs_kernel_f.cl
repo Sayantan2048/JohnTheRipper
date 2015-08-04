@@ -491,41 +491,32 @@
 	H1_k672();	\
 	H2_k672();
 
-__kernel void DES_bs_25(__global DES_bs_vector *K,
-                        __global DES_bs_vector *B_global,
-			__global int *binary,
-			  uint num_loaded_hashes,
-			  volatile __global uint *hash_ids,
-			  volatile __global uint *bitmap) {
+__kernel void DES_bs_iter(__global vtype *generated_hashes,
+			  __global DES_bs_vector *finalized_keys)
+{
+	unsigned int section = get_global_id(0), local_offset_K;
+	unsigned int local_id = get_local_id(0), i;
+	int global_work_size = get_global_size(0), iterations;
 
-		unsigned int section = get_global_id(0), local_offset_K;
-		unsigned int local_id = get_local_id(0), i;
-		int global_work_size = get_global_size(0);
+	local_offset_K  = 56 * local_id;
 
-		local_offset_K  = 56 * local_id;
+	vtype B[64], tmp;
 
-		vtype B[64], tmp;
+	__local DES_bs_vector _local_K[56 * WORK_GROUP_SIZE];
 
-		__local DES_bs_vector _local_K[56 * WORK_GROUP_SIZE];
+	for (i = 0; i < 64; i++)
+		B[i] = generated_hashes[i * global_work_size + section];
 
-		for (i = 0; i < 56; i++)
-			_local_K[local_id * 56 + i] = K[section + i * global_work_size];
-		barrier(CLK_LOCAL_MEM_FENCE);
+	for (i = 0; i < 56; i++)
+		_local_K[local_id * 56 + i] = finalized_keys[section + i * global_work_size];
+	barrier(CLK_LOCAL_MEM_FENCE);
 
-		int iterations;
-
-		{
-			vtype zero = 0;
-			DES_bs_clear_block
-		}
 #pragma unroll 1
-		for (iterations = 24; iterations >= 0; --iterations) {
-			H();
-			if (iterations)
-				BIG_SWAP();
-		}
+	for (iterations = 4; iterations >= 0; --iterations) {
+		H();
+		BIG_SWAP();
+	}
 
-		cmp(B, binary, num_loaded_hashes, hash_ids, bitmap, B_global, section);
-
-		return;
+	for (i = 0; i < 64; i++)
+		generated_hashes[i * global_work_size + section] = B[i];
 }

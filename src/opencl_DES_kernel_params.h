@@ -86,7 +86,9 @@ typedef unsigned WORD vtype;
 	DES_bs_clear_block_8(48); 			\
 	DES_bs_clear_block_8(56);
 
-inline void cmp( __private unsigned DES_bs_vector *B,
+#pragma OPENCL EXTENSION cl_khr_global_int32_base_atomics : enable
+
+inline void cmp( __private vtype *B,
 	  __global int *binary,
 	  int num_loaded_hash,
 	  volatile __global uint *output,
@@ -113,11 +115,12 @@ inline void cmp( __private unsigned DES_bs_vector *B,
 
 		if (mask != ~(int)0) {
 			if (!(atomic_or(&bitmap[i/32], (1U << (i % 32))) & (1U << (i % 32)))) {
-				mask = atomic_inc(&output[0]);
-				output[1 + 2 * mask] = section;
-				output[2 + 2 * mask] = 0;
+				uint nmask;
+				nmask = atomic_inc(&output[0]);
+				output[1 + 2 * nmask] = section;
+				output[2 + 2 * nmask] = 0;
 				for (bit = 0; bit < 64; bit++)
-					B_global[mask * 64 + bit] = (DES_bs_vector)B[bit];
+					B_global[nmask * 64 + bit] = (DES_bs_vector)B[bit];
 
 			}
 		}
